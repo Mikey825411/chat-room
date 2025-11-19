@@ -366,7 +366,7 @@ export default function ChatApp() {
 
       const result = await signUpWithEmail(signUpEmail, signUpPassword, signUpName)
 
-      if (result.error) {
+      if ('error' in result) {
         setAuthError(result.error)
       } else {
         setAuthDialogOpen(null)
