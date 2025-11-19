@@ -285,7 +285,7 @@ export class ChatDatabaseService {
       if (settings && settings.auto_clear_history) {
         const clearAfterDays = settings.clear_after_days || 30
         const cutoffDate = new Date(Date.now() - clearAfterDays * 24 * 60 * 60 * 1000).toISOString()
-        
+
         // Clear old messages from all rooms
         const { error } = await supabase
           .from('messages')
@@ -300,5 +300,218 @@ export class ChatDatabaseService {
     } catch (error) {
       console.error('Error auto-clearing history:', error)
     }
+  }
+
+  // Room operations
+  async getRooms(): Promise<DatabaseRoom[]> {
+    try {
+      const { data, error } = await supabase
+        .from('chat_rooms')
+        .select('*')
+        .order('created_at', { ascending: true })
+
+      if (error) {
+        console.error('Error fetching rooms:', error)
+        return []
+      }
+
+      return data || []
+    } catch (error) {
+      console.error('Error fetching rooms:', error)
+      return []
+    }
+  }
+
+  async getRoom(roomId: string): Promise<DatabaseRoom | null> {
+    try {
+      const { data, error } = await supabase
+        .from('chat_rooms')
+        .select('*')
+        .eq('id', roomId)
+        .single()
+
+      if (error) {
+        console.error('Error fetching room:', error)
+        return null
+      }
+
+      return data
+    } catch (error) {
+      console.error('Error fetching room:', error)
+      return null
+    }
+  }
+
+  async isRoomMember(roomId: string): Promise<boolean> {
+    try {
+      if (!this.currentUser) return false
+
+      const { data, error } = await supabase
+        .from('room_members')
+        .select('id')
+        .eq('room_id', roomId)
+        .eq('user_id', this.currentUser.id)
+        .single()
+
+      return !error && !!data
+    } catch (error) {
+      console.error('Error checking room membership:', error)
+      return false
+    }
+  }
+
+  async getRoomMembership(roomId: string): Promise<DatabaseRoomMember | null> {
+    try {
+      if (!this.currentUser) return null
+
+      const { data, error } = await supabase
+        .from('room_members')
+        .select('*')
+        .eq('room_id', roomId)
+        .eq('user_id', this.currentUser.id)
+        .single()
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error fetching room membership:', error)
+        return null
+      }
+
+      return data
+    } catch (error) {
+      console.error('Error fetching room membership:', error)
+      return null
+    }
+  }
+
+  async joinRoom(roomId: string, password?: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const room = await this.getRoom(roomId)
+      if (!room) {
+        return { success: false, error: 'Room not found' }
+      }
+
+      if (room.type === 'public') {
+        return { success: true }
+      }
+
+      if (room.type === 'private') {
+        if (!this.currentUser) {
+          return { success: false, error: 'Authentication required for private rooms' }
+        }
+
+        if (!password) {
+          return { success: false, error: 'Password required for private rooms' }
+        }
+
+        const isAuthenticated = await authenticateForPrivateRoom(roomId, password)
+        if (!isAuthenticated) {
+          return { success: false, error: 'Invalid password' }
+        }
+
+        return { success: true }
+      }
+
+      return { success: false, error: 'Unknown room type' }
+    } catch (error) {
+      console.error('Error joining room:', error)
+      return { success: false, error: 'Failed to join room' }
+    }
+  }
+
+  async clearPrivateRoom(roomId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const result = await clearPrivateRoomHistory(roomId)
+      return result
+    } catch (error) {
+      console.error('Error clearing private room:', error)
+      return { success: false, error: 'Failed to clear room history' }
+    }
+  }
+
+  // Real-time subscriptions
+  setupPublicRoomRealtime(roomId: string, onNewMessage: (message: DatabaseMessage) => void): () => void {
+    const channelName = `public-room-${roomId}`
+
+    // Remove existing subscription if any
+    if (this.realtimeSubscriptions.has(channelName)) {
+      supabase.removeChannel(this.realtimeSubscriptions.get(channelName))
+    }
+
+    const subscription = supabase
+      .channel(channelName)
+      .on('postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `room_id=eq.${roomId}`
+        },
+        (payload) => {
+          onNewMessage(payload.new as DatabaseMessage)
+        }
+      )
+      .subscribe()
+
+    this.realtimeSubscriptions.set(channelName, subscription)
+
+    // Return cleanup function
+    return () => {
+      supabase.removeChannel(subscription)
+      this.realtimeSubscriptions.delete(channelName)
+    }
+  }
+
+  // Message sending with room type detection
+  async sendMessage(roomId: string, content: string, userName?: string, userAvatar?: string): Promise<DatabaseMessage | null> {
+    try {
+      const room = await this.getRoom(roomId)
+      if (!room) {
+        console.error('Room not found:', roomId)
+        return null
+      }
+
+      // For private rooms, check if user is a member
+      if (room.type === 'private') {
+        const isMember = await this.isRoomMember(roomId)
+        if (!isMember) {
+          console.error('User is not a member of private room:', roomId)
+          return null
+        }
+      }
+
+      const messageData = {
+        room_id: roomId,
+        user_id: this.userId || 'anonymous',
+        user_name: userName || 'Anonymous',
+        user_avatar: userAvatar || null,
+        content,
+        attachments: [] as any[],
+        timestamp: new Date().toISOString()
+      }
+
+      const { data, error } = await supabase
+        .from('messages')
+        .insert(messageData)
+        .select()
+        .single()
+
+      if (error) {
+        console.error('Error sending message:', error)
+        return null
+      }
+
+      return data
+    } catch (error) {
+      console.error('Error sending message:', error)
+      return null
+    }
+  }
+
+  // Cleanup subscriptions on service destruction
+  cleanup(): void {
+    this.realtimeSubscriptions.forEach((subscription) => {
+      supabase.removeChannel(subscription)
+    })
+    this.realtimeSubscriptions.clear()
   }
 }
