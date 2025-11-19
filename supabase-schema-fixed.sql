@@ -89,7 +89,7 @@ ALTER TABLE room_members ENABLE ROW LEVEL SECURITY;
 
 -- User profiles policies
 CREATE POLICY "Users can manage own profile" ON user_profiles
-  FOR ALL USING (user_id = auth.uid());
+  FOR ALL USING (user_id::text = auth.uid()::text);
 
 CREATE POLICY "Anyone can read user profiles" ON user_profiles
   FOR SELECT USING (true);
