@@ -194,7 +194,7 @@ export class ChatDatabaseService {
         .delete()
         .eq('room_id', 'public')
         .lt('timestamp', twentyFourHoursAgo)
-        .not('user_id', this.userId) // Don't delete user's own messages
+        .not('user_id', 'eq', this.userId) // Don't delete user's own messages
 
       if (error) {
         console.error('Error cleaning up old public messages:', error)
