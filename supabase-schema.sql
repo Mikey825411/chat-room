@@ -73,7 +73,7 @@ BEGIN
   WHERE created_at < NOW() - INTERVAL '24 hours'
   AND room_id IN (SELECT id FROM chat_rooms WHERE type = 'public');
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Schedule cleanup every hour using pg_cron
 SELECT cron.schedule('cleanup-public-messages', '0 * * * *', 'SELECT cleanup_old_public_messages();');
