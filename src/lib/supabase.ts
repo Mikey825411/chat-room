@@ -69,6 +69,9 @@ export interface DatabaseRoom {
   id: string
   name: string
   type: 'public' | 'private'
+  password_hash: string | null
+  owner_id: string | null
+  created_by_authenticated_user: boolean
   created_at: string
   updated_at: string
 }
