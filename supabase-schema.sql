@@ -164,7 +164,6 @@ CREATE POLICY "Users can manage own settings" ON user_settings
   FOR ALL USING (user_id = auth.jwt() ->> 'sub');
 
 -- Insert default rooms
-INSERT INTO chat_rooms (id, name, type) VALUES 
-  ('00000000-0000-0000-0000-00000000000001', 'Public Room', 'public'),
-  ('00000000-0000-0000-0000-00000000000002', 'Private P2P', 'private')
+INSERT INTO chat_rooms (id, name, type) VALUES
+  ('00000000-0000-0000-0000-00000000000001', 'Public Room', 'public')
 ON CONFLICT (id) DO NOTHING;
