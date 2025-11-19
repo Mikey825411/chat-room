@@ -316,7 +316,7 @@ export default function ChatApp() {
     return processedFiles
   }
 
-  const fileToAttachment = async (file: File) => {
+  const fileToAttachment = async (file: File): Promise<Attachment> => {
     return new Promise((resolve) => {
       const reader = new FileReader()
       reader.onload = () => {
