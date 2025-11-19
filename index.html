@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retro Chat - Zero-Server Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        * {
+            font-family: 'Press Start 2P', system-ui, sans-serif;
+        }
+        
+        body {
+            background: #000;
+            color: #00ff00;
+            overflow-x: hidden;
+        }
+        
+        .scanlines {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            opacity: 0.2;
+            z-index: 1;
+        }
+        
+        .scanlines::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: #00ff00;
+            animation: scanline 8s linear infinite;
+        }
+        
+        @keyframes scanline {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(100vh); }
+        }
+        
+        .bg-pattern {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            opacity: 0.05;
+            z-index: 0;
+            background-image: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                #00ff00 2px,
+                #00ff00 4px
+            );
+        }
+        
+        .retro-border {
+            border: 4px solid #00ff00;
+            background: #000;
+        }
+        
+        .retro-input {
+            background: #000;
+            border: 2px solid #00ff00;
+            color: #00ff00;
+            padding: 8px;
+        }
+        
+        .retro-input::placeholder {
+            color: #00ff00;
+            opacity: 0.5;
+        }
+        
+        .retro-button {
+            background: #00ff00;
+            color: #000;
+            border: 2px solid #00ff00;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        .retro-button:hover {
+            background: #00cc00;
+        }
+        
+        .retro-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .retro-button-outline {
+            background: transparent;
+            color: #00ff00;
+            border: 2px solid #00ff00;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        .retro-button-outline:hover {
+            background: #00ff00;
+            color: #000;
+        }
+        
+        .message-bubble {
+            border: 1px solid #00ff00;
+            background: #000;
+            padding: 8px;
+            max-width: 200px;
+            word-wrap: break-word;
+        }
+        
+        .message-bubble.own {
+            background: #001100;
+        }
+        
+        .status-connected { color: #00ff00; }
+        .status-connecting { color: #ffff00; }
+        .status-disconnected { color: #ff0000; }
+        
+        .window-title {
+            background: #00ff00;
+            color: #000;
+            padding: 4px 8px;
+            font-size: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .window-controls {
+            display: flex;
+            gap: 4px;
+        }
+        
+        .window-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        
+        .tab-active {
+            background: #00ff00;
+            color: #000;
+        }
+        
+        .tab-inactive {
+            background: transparent;
+            color: #00ff00;
+            border: 2px solid #00ff00;
+        }
+        
+        .scroll-area {
+            height: 300px;
+            overflow-y: auto;
+            border: 2px solid #00ff00;
+            background: #000;
+            padding: 16px;
+        }
+        
+        .scroll-area::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .scroll-area::-webkit-scrollbar-track {
+            background: #000;
+        }
+        
+        .scroll-area::-webkit-scrollbar-thumb {
+            background: #00ff00;
+        }
+        
+        .hidden { display: none; }
+        .block { display: block; }
+        .flex { display: flex; }
+        .items-center { align-items: center; }
+        .justify-between { justify-content: space-between; }
+        .justify-end { justify-content: flex-end; }
+        .justify-start { justify-content: flex-start; }
+        .gap-2 { gap: 8px; }
+        .gap-4 { gap: 16px; }
+        .p-2 { padding: 8px; }
+        .p-4 { padding: 16px; }
+        .p-6 { padding: 24px; }
+        .m-2 { margin: 8px; }
+        .m-4 { margin: 16px; }
+        .mt-2 { margin-top: 8px; }
+        .mt-4 { margin-top: 16px; }
+        .mb-2 { margin-bottom: 8px; }
+        .mb-4 { margin-bottom: 16px; }
+        .text-xs { font-size: 8px; }
+        .text-sm { font-size: 10px; }
+        .text-lg { font-size: 16px; }
+        .w-full { width: 100%; }
+        .h-8 { height: 32px; }
+        .h-12 { height: 48px; }
+        .h-32 { height: 128px; }
+        .h-64 { height: 256px; }
+        .w-8 { width: 32px; }
+        .w-12 { width: 48px; }
+        .max-w-xs { max-width: 320px; }
+        .flex-shrink-0 { flex-shrink: 0; }
+        .relative { position: relative; }
+        .absolute { position: absolute; }
+        .z-10 { z-index: 10; }
+        .space-y-2 > * + * { margin-top: 8px; }
+        .space-y-4 > * + * { margin-top: 16px; }
+        .grid { display: grid; }
+        .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .text-center { text-align: center; }
+        .rounded { border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="scanlines"></div>
+    <div class="bg-pattern"></div>
+    
+    <div class="relative z-10 max-w-6xl mx-auto p-4">
+        <!-- Header -->
+        <div class="retro-border p-4 mb-4 relative">
+            <div class="window-title absolute top-0 left-0 right-0">
+                <div class="window-controls">
+                    <div class="window-dot" style="background: #ff0000;"></div>
+                    <div class="window-dot" style="background: #ffff00;"></div>
+                    <div class="window-dot" style="background: #00ff00;"></div>
+                </div>
+                <div class="flex-1 text-center">RETRO CHAT v1.0</div>
+            </div>
+            <div class="mt-6 flex items-center justify-between">
+                <div class="flex items-center gap-4">
+                    <div class="w-12 h-12 retro-border flex items-center justify-center">
+                        <span id="headerAvatar">?</span>
+                    </div>
+                    <div>
+                        <div class="font-bold" id="headerName">Anonymous</div>
+                        <div class="text-xs">ONLINE</div>
+                    </div>
+                </div>
+                <button onclick="toggleProfileDialog()" class="retro-button-outline">
+                    ⚙ PROFILE
+                </button>
+            </div>
+        </div>
+
+        <!-- Profile Dialog -->
+        <div id="profileDialog" class="hidden fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
+            <div class="retro-border p-6 max-w-md w-full mx-4">
+                <div class="text-lg mb-4">EDIT PROFILE</div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="text-xs">Display Name</label>
+                        <input type="text" id="profileName" class="retro-input w-full mt-2" placeholder="Enter your name">
+                    </div>
+                    <div>
+                        <label class="text-xs">Avatar URL (optional)</label>
+                        <input type="text" id="profileAvatar" class="retro-input w-full mt-2" placeholder="Enter avatar URL">
+                    </div>
+                    <button onclick="saveProfile()" class="retro-button w-full">SAVE PROFILE</button>
+                    <button onclick="toggleProfileDialog()" class="retro-button-outline w-full">CANCEL</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Chat Interface -->
+        <div class="retro-border">
+            <!-- Tabs -->
+            <div class="grid grid-cols-2">
+                <button id="publicTab" onclick="switchTab('public')" class="tab-active p-2 text-xs">🌍 PUBLIC ROOM</button>
+                <button id="privateTab" onclick="switchTab('private')" class="tab-inactive p-2 text-xs">🔒 PRIVATE ROOM</button>
+            </div>
+
+            <!-- Public Room -->
+            <div id="publicRoom" class="block">
+                <div class="p-4">
+                    <div class="text-sm mb-4 flex items-center gap-2">
+                        📡 PUBLIC CHAT ROOM
+                        <span class="text-xs">BROADCAST</span>
+                    </div>
+                    <div class="scroll-area mb-4" id="publicMessages">
+                        <div class="text-center text-xs">No messages yet. Start chatting!</div>
+                    </div>
+                    <div id="publicAttachmentList"></div>
+                    <div class="flex gap-2">
+                        <input type="file" id="publicFileInput" multiple onchange="handleFileSelect(event, false)" class="hidden">
+                        <button onclick="document.getElementById('publicFileInput').click()" class="retro-button-outline" disabled>
+                            📎 ATTACH
+                        </button>
+                        <input type="text" id="publicInput" class="retro-input flex-1" placeholder="Type your message..." onkeypress="handlePublicKeyPress(event)">
+                        <button onclick="sendPublicMessage()" class="retro-button">📤</button>
+                    </div>
+                    <div id="publicWarning" class="hidden mt-2 text-xs" style="color: #ffff00;">
+                        ⚠ Please set your profile name to send messages.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Private Room -->
+            <div id="privateRoom" class="hidden">
+                <div class="p-4">
+                    <div class="text-sm mb-4 flex items-center gap-2">
+                        🔒 PRIVATE P2P ROOM
+                        <span id="connectionStatus" class="text-xs status-disconnected">DISCONNECTED</span>
+                    </div>
+                    
+                    <!-- P2P Connection Setup -->
+                    <div id="p2pSetup" class="space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="space-y-2">
+                                <div class="text-xs">HOST: CREATE OFFER</div>
+                                <button onclick="createP2POffer()" class="retro-button w-full">CREATE OFFER</button>
+                                <textarea id="sdpOffer" class="retro-input w-full h-32 text-xs" placeholder="Offer will appear here..." readonly></textarea>
+                                <button onclick="copyToClipboard('sdpOffer')" class="retro-button-outline w-full">📋 COPY OFFER</button>
+                            </div>
+                            
+                            <div class="space-y-2">
+                                <div class="text-xs">GUEST: JOIN ROOM</div>
+                                <textarea id="remoteOffer" class="retro-input w-full h-24 text-xs" placeholder="Paste offer here..."></textarea>
+                                <button onclick="acceptP2POffer()" class="retro-button w-full">CREATE ANSWER</button>
+                                <textarea id="sdpAnswer" class="retro-input w-full h-32 text-xs" placeholder="Answer will appear here..." readonly></textarea>
+                                <button onclick="copyToClipboard('sdpAnswer')" class="retro-button-outline w-full">📋 COPY ANSWER</button>
+                            </div>
+                        </div>
+                        
+                        <div id="finalizeSection" class="hidden space-y-2">
+                            <div class="text-xs">HOST: FINALIZE CONNECTION</div>
+                            <textarea id="remoteAnswer" class="retro-input w-full h-24 text-xs" placeholder="Paste answer here..."></textarea>
+                            <button onclick="finalizeP2PConnection()" class="retro-button w-full">🔗 CONNECT</button>
+                        </div>
+                    </div>
+
+                    <div class="border-t-2 border-green-500 my-4"></div>
+
+                    <!-- Private Chat -->
+                    <div class="space-y-4">
+                        <div class="scroll-area" id="privateMessages">
+                            <div class="text-center text-xs">Connect to start chatting</div>
+                        </div>
+                        <div id="privateAttachmentList"></div>
+                        <div class="flex gap-2">
+                            <input type="file" id="privateFileInput" multiple onchange="handleFileSelect(event, true)" class="hidden">
+                            <button onclick="document.getElementById('privateFileInput').click()" class="retro-button-outline" disabled>
+                                📎 ATTACH
+                            </button>
+                            <input type="text" id="privateInput" class="retro-input flex-1" placeholder="Type your private message..." onkeypress="handlePrivateKeyPress(event)" disabled>
+                            <button onclick="sendPrivateMessage()" class="retro-button" disabled>📤</button>
+                        </div>
+                        <button id="disconnectBtn" onclick="disconnectP2P()" class="retro-button-outline w-full hidden">🔌 DISCONNECT</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Instructions -->
+        <div class="retro-border mt-4 p-4">
+            <div class="text-sm mb-2">HOW TO USE</div>
+            <div class="text-xs space-y-1">
+                <div><strong>PUBLIC ROOM:</strong> Works automatically between tabs on same browser.</div>
+                <div><strong>PRIVATE ROOM:</strong> Manual P2P connection required:</div>
+                <div>1. Host creates offer → copies offer text</div>
+                <div>2. Guest pastes offer → creates answer → copies answer</div>
+                <div>3. Host pastes answer → clicks connect</div>
+                <div><strong>FILE SHARING:</strong> Click "ATTACH" to add files (max 10MB each). Supports images, videos, audio, documents, and archives.</div>
+                <div><strong>NOTE:</strong> P2P may fail behind strict NATs. No TURN server.</div>
+            </div>
+        </div>
+
+        <!-- Preview Dialog -->
+        <div id="previewDialog" class="hidden fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
+            <div class="retro-border p-6 max-w-4xl w-full mx-4 max-h-[80vh] overflow-auto">
+                <div class="text-lg mb-4 flex items-center gap-2">
+                    <span id="previewIcon">📎</span>
+                    <span id="previewName">File Preview</span>
+                </div>
+                <div id="previewContent" class="space-y-4">
+                    <!-- Preview content will be inserted here -->
+                </div>
+                <div class="mt-4">
+                    <button onclick="downloadAttachment(previewAttachment)" class="retro-button">
+                        📥 DOWNLOAD
+                    </button>
+                    <button onclick="document.getElementById('previewDialog').classList.add('hidden')" class="retro-button-outline ml-2">
+                        CLOSE
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let profile = { name: '', avatar: '' };
+        let publicMessages = [];
+        let privateMessages = [];
+        let publicChannel = null;
+        let p2pRoom = {
+            peerConnection: null,
+            dataChannel: null,
+            isConnected: false,
+            isHost: false
+        };
+        let publicAttachments = [];
+        let privateAttachments = [];
+        let previewAttachment = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            loadProfile();
+            initializePublicChannel();
+            updateUI();
+        });
+
+        // Profile Management
+        function loadProfile() {
+            const saved = localStorage.getItem('retroChatProfile');
+            if (saved) {
+                profile = JSON.parse(saved);
+            } else {
+                profile = {
+                    name: `User${Math.floor(Math.random() * 1000)}`,
+                    avatar: ''
+                };
+            }
+            updateProfileDisplay();
+        }
+
+        function saveProfile() {
+            const name = document.getElementById('profileName').value;
+            const avatar = document.getElementById('profileAvatar').value;
+            
+            if (name.trim()) {
+                profile = { name: name.trim(), avatar: avatar.trim() };
+                localStorage.setItem('retroChatProfile', JSON.stringify(profile));
+                updateProfileDisplay();
+                toggleProfileDialog();
+                updatePublicWarning();
+            }
+        }
+
+        function updateProfileDisplay() {
+            document.getElementById('headerName').textContent = profile.name || 'Anonymous';
+            document.getElementById('headerAvatar').textContent = profile.name ? profile.name[0].toUpperCase() : '?';
+            
+            if (profile.avatar) {
+                document.getElementById('headerAvatar').innerHTML = `<img src="${profile.avatar}" class="w-8 h-8 rounded">`;
+            }
+        }
+
+        function toggleProfileDialog() {
+            const dialog = document.getElementById('profileDialog');
+            dialog.classList.toggle('hidden');
+            
+            if (!dialog.classList.contains('hidden')) {
+                document.getElementById('profileName').value = profile.name;
+                document.getElementById('profileAvatar').value = profile.avatar;
+            }
+        }
+
+        function updatePublicWarning() {
+            const warning = document.getElementById('publicWarning');
+            if (profile.name.trim()) {
+                warning.classList.add('hidden');
+            } else {
+                warning.classList.remove('hidden');
+            }
+        }
+
+        // Tab Management
+        function switchTab(tab) {
+            const publicTab = document.getElementById('publicTab');
+            const privateTab = document.getElementById('privateTab');
+            const publicRoom = document.getElementById('publicRoom');
+            const privateRoom = document.getElementById('privateRoom');
+            
+            if (tab === 'public') {
+                publicTab.className = 'tab-active p-2 text-xs';
+                privateTab.className = 'tab-inactive p-2 text-xs';
+                publicRoom.classList.remove('hidden');
+                publicRoom.classList.add('block');
+                privateRoom.classList.add('hidden');
+                privateRoom.classList.remove('block');
+            } else {
+                publicTab.className = 'tab-inactive p-2 text-xs';
+                privateTab.className = 'tab-active p-2 text-xs';
+                publicRoom.classList.add('hidden');
+                publicRoom.classList.remove('block');
+                privateRoom.classList.remove('hidden');
+                privateRoom.classList.add('block');
+            }
+        }
+
+        // Public Room Functions
+        function initializePublicChannel() {
+            if (typeof BroadcastChannel !== 'undefined') {
+                publicChannel = new BroadcastChannel('retro-public-chat');
+                publicChannel.onmessage = function(event) {
+                    const message = event.data;
+                    publicMessages.push(message);
+                    displayPublicMessages();
+                };
+            }
+        }
+
+        function createMessage(content, attachments = [], isPrivate = false) {
+            return {
+                id: Math.random().toString(36).substr(2, 9),
+                author: profile.name || 'Anonymous',
+                avatar: profile.avatar || '',
+                content: content,
+                timestamp: new Date(),
+                isOwn: true,
+                attachments: attachments
+            };
+        }
+
+        function fileToAttachment(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const base64 = reader.result;
+                    resolve({
+                        id: Math.random().toString(36).substr(2, 9),
+                        name: file.name,
+                        type: file.type,
+                        size: file.size,
+                        data: base64,
+                        url: base64
+                    });
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function processFiles(files) {
+            const attachments = [];
+            for (const file of files) {
+                if (file.size > 10 * 1024 * 1024) { // 10MB limit
+                    alert(`File ${file.name} is too large. Maximum size is 10MB.`);
+                    continue;
+                }
+                const attachment = await fileToAttachment(file);
+                attachments.push(attachment);
+            }
+            return attachments;
+        }
+
+        function getFileIcon(type) {
+            if (type.startsWith('image/')) return '🖼️';
+            if (type.startsWith('video/')) return '🎥';
+            if (type.startsWith('audio/')) return '🎵';
+            if (type.includes('text') || type.includes('document')) return '📄';
+            if (type.includes('zip') || type.includes('rar') || type.includes('7z')) return '📦';
+            return '📎';
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function handleFileSelect(event, isPrivate) {
+            const files = Array.from(event.target.files || []);
+            if (isPrivate) {
+                privateAttachments = [...privateAttachments, ...files];
+            } else {
+                publicAttachments = [...publicAttachments, ...files];
+            }
+            updateAttachmentLists();
+        }
+
+        function removeAttachment(index, isPrivate) {
+            if (isPrivate) {
+                privateAttachments = privateAttachments.filter((_, i) => i !== index);
+            } else {
+                publicAttachments = publicAttachments.filter((_, i) => i !== index);
+            }
+            updateAttachmentLists();
+        }
+
+        function downloadAttachment(attachment) {
+            const link = document.createElement('a');
+            link.href = attachment.data;
+            link.download = attachment.name;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function previewAttachmentDialog(attachment) {
+            previewAttachment = attachment;
+            document.getElementById('previewIcon').textContent = getFileIcon(attachment.type);
+            document.getElementById('previewName').textContent = attachment.name;
+            
+            let content = '';
+            if (attachment.type.startsWith('image/')) {
+                content = `<img src="${attachment.url}" alt="${attachment.name}" class="max-w-full h-auto rounded">`;
+            } else if (attachment.type.startsWith('video/')) {
+                content = `<video src="${attachment.url}" controls class="max-w-full h-auto rounded"></video>`;
+            } else if (attachment.type.startsWith('audio/')) {
+                content = `<audio src="${attachment.url}" controls class="w-full"></audio>`;
+            } else {
+                content = `
+                    <div class="border border-green-400 bg-black p-4 rounded">
+                        <div class="flex items-center gap-2 mb-4">
+                            <span>${getFileIcon(attachment.type)}</span>
+                            <span class="text-sm">${attachment.name}</span>
+                        </div>
+                        <div class="text-xs space-y-2">
+                            <div>Type: ${attachment.type}</div>
+                            <div>Size: ${formatFileSize(attachment.size)}</div>
+                        </div>
+                        ${attachment.type.startsWith('text/') ? `
+                            <div class="mt-4 p-2 bg-green-950 rounded text-xs max-h-40 overflow-auto">
+                                ${attachment.data.split(',')[1]?.substring(0, 500)}...
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }
+            
+            document.getElementById('previewContent').innerHTML = content;
+            document.getElementById('previewDialog').classList.remove('hidden');
+        }
+
+        function updateAttachmentLists() {
+            document.getElementById('publicAttachmentList').innerHTML = renderAttachmentList(publicAttachments, false);
+            document.getElementById('privateAttachmentList').innerHTML = renderAttachmentList(privateAttachments, true);
+        }
+
+        function updateUI() {
+            updateProfileDisplay();
+            updateAttachmentLists();
+            updatePublicWarning();
+        }
+
+        async function sendPublicMessage() {
+            const input = document.getElementById('publicInput');
+            const content = input.value.trim();
+            
+            if ((!content && publicAttachments.length === 0) || !profile.name.trim()) return;
+            
+            const attachments = await processFiles(publicAttachments);
+            const message = createMessage(content, attachments);
+            publicMessages.push(message);
+            displayPublicMessages();
+            
+            if (publicChannel) {
+                publicChannel.postMessage(message);
+            }
+            
+            input.value = '';
+            publicAttachments = [];
+            updateAttachmentLists();
+        }
+
+        function handlePublicKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendPublicMessage();
+            }
+        }
+
+        function displayPublicMessages() {
+            const container = document.getElementById('publicMessages');
+            
+            if (publicMessages.length === 0) {
+                container.innerHTML = '<div class="text-center text-xs">No messages yet. Start chatting!</div>';
+                return;
+            }
+            
+            container.innerHTML = publicMessages.map(msg => `
+                <div class="flex gap-2 ${msg.isOwn ? 'justify-end' : 'justify-start'} mb-2">
+                    ${!msg.isOwn ? `
+                        <div class="w-8 h-8 retro-border flex-shrink-0 flex items-center justify-center">
+                            ${msg.avatar ? `<img src="${msg.avatar}" class="w-6 h-6">` : '<span class="text-xs">' + (msg.author[0] || '?') + '</span>'}
+                        </div>
+                    ` : ''}
+                    <div class="${msg.isOwn ? 'text-right' : ''}">
+                        <div class="text-xs opacity-70">${msg.author}</div>
+                        ${msg.content ? `<div class="message-bubble ${msg.isOwn ? 'own' : ''}">${msg.content}</div>` : ''}
+                        ${renderAttachments(msg.attachments)}
+                        <div class="text-xs opacity-70 mt-1">${formatTime(msg.timestamp)}</div>
+                    </div>
+                    ${msg.isOwn ? `
+                        <div class="w-8 h-8 retro-border flex-shrink-0 flex items-center justify-center">
+                            ${msg.avatar ? `<img src="${msg.avatar}" class="w-6 h-6">` : '<span class="text-xs">' + (msg.author[0] || '?') + '</span>'}
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('');
+            
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // P2P Functions
+        async function createP2POffer() {
+            try {
+                const pc = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+                
+                const dc = pc.createDataChannel('chat');
+                setupDataChannel(dc);
+                
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                
+                p2pRoom = {
+                    peerConnection: pc,
+                    dataChannel: dc,
+                    isConnected: false,
+                    isHost: true
+                };
+                
+                document.getElementById('sdpOffer').value = JSON.stringify(pc.localDescription);
+                updateConnectionStatus('connecting');
+                
+            } catch (error) {
+                console.error('Error creating offer:', error);
+                alert('Failed to create P2P offer. Please check browser support.');
+            }
+        }
+
+        async function acceptP2POffer() {
+            try {
+                const offerText = document.getElementById('remoteOffer').value;
+                if (!offerText) {
+                    alert('Please paste the offer first');
+                    return;
+                }
+                
+                const pc = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+                
+                pc.ondatachannel = function(event) {
+                    const dc = event.channel;
+                    setupDataChannel(dc);
+                    p2pRoom.dataChannel = dc;
+                    p2pRoom.peerConnection = pc;
+                    p2pRoom.isHost = false;
+                };
+                
+                const offer = JSON.parse(offerText);
+                await pc.setRemoteDescription(offer);
+                
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                
+                document.getElementById('sdpAnswer').value = JSON.stringify(pc.localDescription);
+                document.getElementById('finalizeSection').classList.remove('hidden');
+                updateConnectionStatus('connecting');
+                
+            } catch (error) {
+                console.error('Error accepting offer:', error);
+                alert('Failed to accept P2P offer. Please check the offer format.');
+            }
+        }
+
+        async function finalizeP2PConnection() {
+            try {
+                if (!p2pRoom.peerConnection) {
+                    alert('Connection not initialized');
+                    return;
+                }
+                
+                const answerText = document.getElementById('remoteAnswer').value;
+                if (!answerText) {
+                    alert('Please paste the answer first');
+                    return;
+                }
+                
+                const answer = JSON.parse(answerText);
+                await p2pRoom.peerConnection.setRemoteDescription(answer);
+                updateConnectionStatus('connected');
+                
+            } catch (error) {
+                console.error('Error finalizing connection:', error);
+                alert('Failed to finalize P2P connection. Please check the answer format.');
+            }
+        }
+
+        function setupDataChannel(dc) {
+            dc.onopen = function() {
+                updateConnectionStatus('connected');
+                p2pRoom.isConnected = true;
+                document.getElementById('privateInput').disabled = false;
+                document.getElementById('disconnectBtn').classList.remove('hidden');
+                document.getElementById('p2pSetup').classList.add('hidden');
+            };
+            
+            dc.onmessage = function(event) {
+                try {
+                    const message = JSON.parse(event.data);
+                    privateMessages.push(message);
+                    displayPrivateMessages();
+                } catch (error) {
+                    console.error('Error parsing message:', error);
+                }
+            };
+            
+            dc.onclose = function() {
+                updateConnectionStatus('disconnected');
+                resetP2PConnection();
+            };
+        }
+
+        async function sendPrivateMessage() {
+            const input = document.getElementById('privateInput');
+            const content = input.value.trim();
+            
+            if ((!content && privateAttachments.length === 0) || !p2pRoom.dataChannel || p2pRoom.dataChannel.readyState !== 'open') return;
+            
+            const attachments = await processFiles(privateAttachments);
+            const message = createMessage(content, attachments, true);
+            privateMessages.push(message);
+            displayPrivateMessages();
+            
+            p2pRoom.dataChannel.send(JSON.stringify(message));
+            input.value = '';
+            privateAttachments = [];
+            updateAttachmentLists();
+        }
+
+        function handlePrivateKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendPrivateMessage();
+            }
+        }
+
+        function displayPrivateMessages() {
+            const container = document.getElementById('privateMessages');
+            
+            if (privateMessages.length === 0) {
+                container.innerHTML = '<div class="text-center text-xs">' + (p2pRoom.isConnected ? 'Connected! Start chatting...' : 'Connect to start chatting') + '</div>';
+                return;
+            }
+            
+            container.innerHTML = privateMessages.map(msg => `
+                <div class="flex gap-2 ${msg.isOwn ? 'justify-end' : 'justify-start'} mb-2">
+                    ${!msg.isOwn ? `
+                        <div class="w-8 h-8 retro-border flex-shrink-0 flex items-center justify-center">
+                            ${msg.avatar ? `<img src="${msg.avatar}" class="w-6 h-6">` : '<span class="text-xs">' + (msg.author[0] || '?') + '</span>'}
+                        </div>
+                    ` : ''}
+                    <div class="${msg.isOwn ? 'text-right' : ''}">
+                        <div class="text-xs opacity-70">${msg.author}</div>
+                        ${msg.content ? `<div class="message-bubble ${msg.isOwn ? 'own' : ''}">${msg.content}</div>` : ''}
+                        ${renderAttachments(msg.attachments)}
+                        <div class="text-xs opacity-70 mt-1">${formatTime(msg.timestamp)}</div>
+                    </div>
+                    ${msg.isOwn ? `
+                        <div class="w-8 h-8 retro-border flex-shrink-0 flex items-center justify-center">
+                            ${msg.avatar ? `<img src="${msg.avatar}" class="w-6 h-6">` : '<span class="text-xs">' + (msg.author[0] || '?') + '</span>'}
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('');
+            
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function disconnectP2P() {
+            if (p2pRoom.dataChannel) {
+                p2pRoom.dataChannel.close();
+            }
+            if (p2pRoom.peerConnection) {
+                p2pRoom.peerConnection.close();
+            }
+            resetP2PConnection();
+        }
+
+        function resetP2PConnection() {
+            p2pRoom = {
+                peerConnection: null,
+                dataChannel: null,
+                isConnected: false,
+                isHost: false
+            };
+            
+            document.getElementById('privateInput').disabled = true;
+            document.getElementById('disconnectBtn').classList.add('hidden');
+            document.getElementById('p2pSetup').classList.remove('hidden');
+            document.getElementById('finalizeSection').classList.add('hidden');
+            document.getElementById('sdpOffer').value = '';
+            document.getElementById('sdpAnswer').value = '';
+            document.getElementById('remoteOffer').value = '';
+            document.getElementById('remoteAnswer').value = '';
+            privateAttachments = [];
+            
+            updateConnectionStatus('disconnected');
+            displayPrivateMessages();
+        }
+
+        function renderAttachments(attachments) {
+            if (!attachments || attachments.length === 0) return '';
+            
+            return attachments.map(attachment => {
+                const isImage = attachment.type.startsWith('image/');
+                const isVideo = attachment.type.startsWith('video/');
+                const isAudio = attachment.type.startsWith('audio/');
+                
+                return `
+                    <div class="border border-green-400 bg-black p-2 rounded mt-2">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span>${getFileIcon(attachment.type)}</span>
+                            <span class="text-xs truncate flex-1">${attachment.name}</span>
+                            <span class="text-xs opacity-70">${formatFileSize(attachment.size)}</span>
+                        </div>
+                        
+                        ${isImage ? `
+                            <img 
+                                src="${attachment.url}" 
+                                alt="${attachment.name}"
+                                class="max-w-full h-32 object-cover rounded cursor-pointer hover:opacity-80"
+                                onclick="previewAttachmentDialog(${JSON.stringify(attachment).replace(/"/g, '&quot;')})"
+                            />
+                        ` : ''}
+                        
+                        ${isVideo ? `
+                            <video 
+                                src="${attachment.url}"
+                                controls
+                                class="max-w-full h-32 rounded"
+                            />
+                        ` : ''}
+                        
+                        ${isAudio ? `
+                            <audio 
+                                src="${attachment.url}"
+                                controls
+                                class="w-full"
+                            />
+                        ` : ''}
+                        
+                        ${!isImage && !isVideo && !isAudio ? `
+                            <div class="flex items-center gap-2">
+                                <button
+                                    onclick="previewAttachmentDialog(${JSON.stringify(attachment).replace(/"/g, '&quot;')})"
+                                    class="text-xs retro-button"
+                                >
+                                    Preview
+                                </button>
+                                <button
+                                    onclick="downloadAttachment(${JSON.stringify(attachment).replace(/"/g, '&quot;')})"
+                                    class="text-xs retro-button"
+                                >
+                                    Download
+                                </button>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderAttachmentList(attachments, isPrivate) {
+            if (attachments.length === 0) return '';
+            
+            return `
+                <div class="border border-green-400 bg-black p-2 mb-2">
+                    <div class="text-xs mb-2">Attachments (${attachments.length}):</div>
+                    <div class="space-y-1">
+                        ${attachments.map((file, index) => `
+                            <div class="flex items-center gap-2 text-xs">
+                                <span>${getFileIcon(file.type)}</span>
+                                <span class="flex-1 truncate">${file.name}</span>
+                                <span class="opacity-70">${formatFileSize(file.size)}</span>
+                                <button
+                                    onclick="removeAttachment(${index}, ${isPrivate})"
+                                    class="text-red-400 hover:text-red-300"
+                                >
+                                    ×
+                                </button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function updateConnectionStatus(status) {
+            const statusElement = document.getElementById('connectionStatus');
+            statusElement.textContent = status.toUpperCase();
+            statusElement.className = `text-xs status-${status}`;
+        }
+
+        // Utility Functions
+        function copyToClipboard(elementId) {
+            const element = document.getElementById(elementId);
+            element.select();
+            document.execCommand('copy');
+            alert('Copied to clipboard!');
+        }
+
+        function formatTime(date) {
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        // Initialize warnings
+        updatePublicWarning();
+    </script>
+</body>
+</html>
