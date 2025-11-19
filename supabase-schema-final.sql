@@ -118,9 +118,15 @@ CREATE POLICY "Private messages readable by room members" ON messages
   ));
 
 CREATE POLICY "Anyone can insert messages to public rooms" ON messages
-  FOR INSERT WITH CHECK (EXISTS (
-    SELECT 1 FROM chat_rooms WHERE chat_rooms.id = room_id AND chat_rooms.type = 'public'
-  ));
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM chat_rooms WHERE chat_rooms.id = room_id AND chat_rooms.type = 'public'
+    )
+    AND (
+      (auth.uid() IS NOT NULL AND user_id = auth.uid()) OR
+      (auth.uid() IS NULL AND user_id IS NULL)
+    )
+  );
 
 CREATE POLICY "Room members can insert messages to private rooms" ON messages
   FOR INSERT WITH CHECK (EXISTS (
