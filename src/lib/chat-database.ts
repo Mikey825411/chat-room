@@ -487,7 +487,7 @@ export class ChatDatabaseService {
 
       const messageData = {
         room_id: roomId,
-        user_id: this.userId || 'anonymous',
+        user_id: this.currentUser?.id || null, // Will be null for anonymous users
         user_name: userName || 'Anonymous',
         user_avatar: userAvatar || null,
         content,
