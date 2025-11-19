@@ -1,7 +1,7 @@
 -- Create user_profiles table
 CREATE TABLE IF NOT EXISTS user_profiles (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id TEXT NOT NULL UNIQUE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   display_name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   avatar_url TEXT,
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS chat_rooms (
 CREATE TABLE IF NOT EXISTS messages (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   room_id UUID REFERENCES chat_rooms(id) ON DELETE CASCADE,
-  user_id TEXT NOT NULL,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   user_name TEXT NOT NULL,
   user_avatar TEXT,
   content TEXT,
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS messages (
 -- Create user_settings table
 CREATE TABLE IF NOT EXISTS user_settings (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id TEXT NOT NULL UNIQUE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   auto_clear_history BOOLEAN DEFAULT false,
   clear_after_days INTEGER DEFAULT 30,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -62,9 +62,6 @@ CREATE INDEX IF NOT EXISTS idx_room_members_room_id ON room_members(room_id);
 CREATE INDEX IF NOT EXISTS idx_room_members_user_id ON room_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_chat_rooms_type ON chat_rooms(type);
 
--- Enable pg_cron extension for scheduled jobs
-CREATE EXTENSION IF NOT EXISTS pg_cron;
-
 -- Database function for automated 24-hour public message cleanup
 CREATE OR REPLACE FUNCTION cleanup_old_public_messages()
 RETURNS void AS $$
@@ -73,10 +70,7 @@ BEGIN
   WHERE created_at < NOW() - INTERVAL '24 hours'
   AND room_id IN (SELECT id FROM chat_rooms WHERE type = 'public');
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Schedule cleanup every hour using pg_cron
-SELECT cron.schedule('cleanup-public-messages', '0 * * * *', 'SELECT cleanup_old_public_messages();');
+$$ LANGUAGE plpgsql;
 
 -- Row Level Security Policies
 
@@ -124,9 +118,15 @@ CREATE POLICY "Private messages readable by room members" ON messages
   ));
 
 CREATE POLICY "Anyone can insert messages to public rooms" ON messages
-  FOR INSERT WITH CHECK (EXISTS (
-    SELECT 1 FROM chat_rooms WHERE chat_rooms.id = room_id AND chat_rooms.type = 'public'
-  ));
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM chat_rooms WHERE chat_rooms.id = room_id AND chat_rooms.type = 'public'
+    )
+    AND (
+      (auth.uid() IS NOT NULL AND user_id = auth.uid()) OR
+      (auth.uid() IS NULL AND user_id IS NULL)
+    )
+  );
 
 CREATE POLICY "Room members can insert messages to private rooms" ON messages
   FOR INSERT WITH CHECK (EXISTS (
@@ -136,7 +136,9 @@ CREATE POLICY "Room members can insert messages to private rooms" ON messages
   ));
 
 CREATE POLICY "Users can delete own messages" ON messages
-  FOR DELETE USING (user_id = auth.uid());
+  FOR DELETE USING (
+    (auth.uid() IS NOT NULL AND user_id = auth.uid())
+  );
 
 CREATE POLICY "Room owners can delete messages in their rooms" ON messages
   FOR DELETE USING (EXISTS (
@@ -164,6 +166,6 @@ CREATE POLICY "Users can manage own settings" ON user_settings
   FOR ALL USING (user_id = auth.uid());
 
 -- Insert default rooms
-INSERT INTO chat_rooms (id, name, type) VALUES
-  ('00000000-0000-0000-0000-000000000001'::uuid, 'Public Room', 'public')
-ON CONFLICT (id) DO NOTHING;
+INSERT INTO chat_rooms (name, type) VALUES
+  ('Public Room', 'public')
+ON CONFLICT DO NOTHING;

@@ -1,19 +1,21 @@
+'use client'
+
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Copy, Send, User, Settings, Wifi, WifiOff, Users, Lock, AlertCircle, Trash2, Database, Loader2 } from 'lucide-react'
+import { Copy, Send, User, Settings, Users, Lock, AlertCircle, Trash2, Database, Loader2, Plus, Eye } from 'lucide-react'
 import { ChatDatabaseService } from '@/lib/chat-database'
-import { signInWithEmail, signUpWithEmail, signOut } from '@/lib/supabase'
+import { signInWithEmail, signUpWithEmail, signOut, createPrivateRoom, getCurrentUser, DatabaseRoom } from '@/lib/supabase'
+import { PrivateRoomPasswordDialog } from '@/components/PrivateRoomPasswordDialog'
+import { CreatePrivateRoomDialog } from '@/components/CreatePrivateRoomDialog'
+import { PrivateRoomManagement } from '@/components/PrivateRoomManagement'
 
 interface Message {
   id: string
@@ -30,41 +32,21 @@ interface Attachment {
   name: string
   type: string
   size: number
-  data: string // base64 encoded
-  url?: string // for preview
-}
-
-interface UserProfile {
-  name: string
-  avatar: string
-  email: string
-}
-
-interface P2PRoom {
-  id: string
-  peerConnection: RTCPeerConnection | null
-  dataChannel: RTCDataChannel | null
-  isConnected: boolean
-  isHost: boolean
+  data: string
+  url?: string
 }
 
 export default function ChatApp() {
-  const [profile, setProfile] = useState<UserProfile>({ name: '', avatar: '' })
-  const [publicMessages, setPublicMessages] = useState<Message[]>([])
-  const [privateMessages, setPrivateMessages] = useState<Message[]>([])
+  const [profile, setProfile] = useState({ name: '', avatar: '' })
+  const [messages, setMessages] = useState<Message[]>([])
   const [messageInput, setMessageInput] = useState('')
-  const [privateMessageInput, setPrivateMessageInput] = useState('')
   const [profileDialogOpen, setProfileDialogOpen] = useState(false)
-  const [publicAttachments, setPublicAttachments] = useState<File[]>([])
-  const [privateAttachments, setPrivateAttachments] = useState<File[]>([])
+  const [attachments, setAttachments] = useState<File[]>([])
   const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null)
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false)
-  const [clearHistoryDialogOpen, setClearHistoryDialogOpen] = useState(false)
-  const [autoClearHistory, setAutoClearHistory] = useState(false)
-  const [clearAfterDays, setClearAfterDays] = useState(30)
   const [isLoading, setIsLoading] = useState(false)
-  const [dbService] = useState<ChatDatabaseService | null>(null)
-  
+  const [dbService, setDbService] = useState<ChatDatabaseService | null>(null)
+
   // Auth state
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [currentUser, setCurrentUser] = useState<any>(null)
@@ -77,351 +59,201 @@ export default function ChatApp() {
   const [signUpEmail, setSignUpEmail] = useState('')
   const [signUpPassword, setSignUpPassword] = useState('')
 
-  const publicChannelRef = useRef<BroadcastChannel | null>(null)
+  // Room state
+  const [rooms, setRooms] = useState<DatabaseRoom[]>([])
+  const [currentRoom, setCurrentRoom] = useState<DatabaseRoom | null>(null)
+  const [showPasswordDialog, setShowPasswordDialog] = useState(false)
+  const [showCreateRoomDialog, setShowCreateRoomDialog] = useState(false)
+  const [selectedRoomForPassword, setSelectedRoomForPassword] = useState<DatabaseRoom | null>(null)
+  const [realtimeUnsubscribe, setRealtimeUnsubscribe] = useState<(() => void) | null>(null)
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Initialize database service and auth
   useEffect(() => {
     const service = ChatDatabaseService.getInstance()
     setDbService(service)
-    
-    // Initialize auth and load data
+
     if (service.isSupabaseConfigured()) {
       initializeAuth(service)
-      loadStoredMessages(service)
-    } else {
-      loadUserSettings(service)
-      loadStoredMessages(service)
+      loadRooms(service)
+      loadStoredProfile()
     }
   }, [])
 
+  // Clean up realtime subscriptions
+  useEffect(() => {
+    return () => {
+      if (realtimeUnsubscribe) {
+        realtimeUnsubscribe()
+      }
+    }
+  }, [realtimeUnsubscribe])
+
+  // Load stored profile
+  const loadStoredProfile = () => {
+    const storedProfile = localStorage.getItem('chatProfile')
+    if (storedProfile) {
+      try {
+        const parsed = JSON.parse(storedProfile)
+        setProfile({ name: parsed.name || '', avatar: parsed.avatar || '' })
+      } catch (error) {
+        console.error('Error parsing stored profile:', error)
+      }
+    }
+  }
+
+  // Initialize auth
   const initializeAuth = async (service: ChatDatabaseService) => {
     try {
       await service.initializeAuth()
-      const user = await service.getUserProfile()
+      const user = await getCurrentUser()
       setCurrentUser(user)
       setIsAuthenticated(!!user)
-      
-      // Set up auth state change listener
-      service.onAuthStateChange((event) => {
-        setCurrentUser(event.session?.user || null)
-        setIsAuthenticated(!!event.session)
-      })
     } catch (error) {
       console.error('Error initializing auth:', error)
     }
   }
 
-  const loadStoredMessages = async (service: ChatDatabaseService) => {
+  // Load rooms
+  const loadRooms = async (service: ChatDatabaseService) => {
     try {
-      setIsLoading(true)
-      const [publicMessages, privateMessages] = await Promise.all([
-        service.getMessages('public'),
-        service.getMessages('private')
-      ])
-      
-      setPublicMessages(publicMessages.map(msg => service.convertFromDatabaseMessage(msg)))
-      setPrivateMessages(privateMessages.map(msg => service.convertFromDatabaseMessage(msg)))
-    } catch (error) {
-      console.error('Error loading stored messages:', error)
-    } finally {
-      setIsLoading(false)
-    }
-  }
+      const roomList = await service.getRooms()
+      setRooms(roomList)
 
-  const loadUserSettings = async (service: ChatDatabaseService) => {
-    try {
-      const settings = await service.getUserSettings()
-      if (settings) {
-        setAutoClearHistory(settings.auto_clear_history)
-        setClearAfterDays(settings.clear_after_days)
+      // Auto-select public room
+      const publicRoom = roomList.find(room => room.type === 'public')
+      if (publicRoom) {
+        await selectRoom(publicRoom, service)
       }
     } catch (error) {
-      console.error('Error loading user settings:', error)
+      console.error('Error loading rooms:', error)
     }
   }
 
-  // Save profile to localStorage and load from localStorage
-  useEffect(() => {
-    if (profile.name) {
-      localStorage.setItem('chatProfile', JSON.stringify(profile))
+  // Select a room
+  const selectRoom = async (room: DatabaseRoom, service: ChatDatabaseService) => {
+    // Check private room access
+    if (room.type === 'private' && !isAuthenticated) {
+      setSelectedRoomForPassword(room)
+      setShowPasswordDialog(true)
+      return
     }
-  }, [profile.name])
 
-  useEffect(() => {
-    if (profile.name) {
-      localStorage.setItem('chatProfile', JSON.stringify(profile))
-    }
-  }, [profile])
-
-  // Initialize BroadcastChannel for public room
-  useEffect(() => {
-    if (typeof BroadcastChannel !== 'undefined') {
-      publicChannelRef.current = new BroadcastChannel('retro-public-chat')
-      
-      publicChannelRef.current.onmessage = (event) => {
-        const message: Message = event.data
-        setPublicMessages(prev => [...prev, message])
+    // For private rooms, check if user is a member
+    if (room.type === 'private' && isAuthenticated) {
+      const isMember = await service.isRoomMember(room.id)
+      if (!isMember) {
+        setSelectedRoomForPassword(room)
+        setShowPasswordDialog(true)
+        return
       }
     }
-  }, [])
 
-  const createMessage = (content: string, attachments: Attachment[] = [], isPrivate = false): Message => {
-    return {
-      id: Math.random().toString(36).substr(2, 9),
-      author: profile.name || 'Anonymous',
-      avatar: profile.avatar || '',
-      content,
-      timestamp: new Date(),
-      isOwn: true,
-      attachments
+    // Clean up previous subscription
+    if (realtimeUnsubscribe) {
+      realtimeUnsubscribe()
+      setRealtimeUnsubscribe(null)
     }
-  }
 
-  const fileToAttachment = async (file: File): Promise<Attachment> => {
-    return new Promise((resolve) => {
-      const reader = new FileReader()
-      reader.onload = () => {
-        const base64 = reader.result as string
-        resolve({
-          id: Math.random().toString(36).substr(2, 9),
-          name: file.name,
-          type: file.type,
-          size: file.size,
-          data: base64,
-          url: base64
+    // Load room messages
+    try {
+      const roomMessages = await service.getMessages(room.id)
+      setMessages(roomMessages.map(msg => service.convertFromDatabaseMessage(msg)))
+      setCurrentRoom(room)
+
+      // Set up real-time subscription for public rooms
+      if (room.type === 'public') {
+        const unsubscribe = service.setupPublicRoomRealtime(room.id, (newMessage) => {
+          setMessages(prev => [...prev, service.convertFromDatabaseMessage(newMessage)])
         })
+        setRealtimeUnsubscribe(() => unsubscribe)
       }
-      reader.readAsDataURL(file)
-    })
-  }
-
-  const processFiles = async (files: File[]): Promise<Attachment[]> => {
-    const attachments: Attachment[] = []
-    for (const file of files) {
-      if (file.size > 10 * 1024 * 1024) { // 10MB limit
-        alert(`File ${file.name} is too large. Maximum size is 10MB.`)
-        continue
-      }
-      const attachment = await fileToAttachment(file)
-      attachments.push(attachment)
-    }
-    return attachments
-  }
-
-  const getFileIcon = (type: string) => {
-    if (type.startsWith('image/')) return <Image className="w-4 h-4" alt="Image file" />
-    if (type.startsWith('video/')) return <Video className="w-4 h-4" alt="Video file" />
-    if (type.startsWith('audio/')) return <Loader2 className="w-4 h-4" alt="Audio file" />
-    if (type.includes('text') || type.includes('document')) return <Database className="w-4 h-4" alt="Document file" />
-    if (type.includes('zip') || type.includes('rar') || type.includes('7z')) return <Database className="w-4 h-4" alt="Archive file" />
-    return <Database className="w-4 h-4" alt="File" />
-  }
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes'
-    const k = 1024
-    const sizes = ['Bytes', 'KB', 'MB', 'GB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
-
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>, isPrivate: boolean) => {
-    const files = Array.from(event.target.files || [])
-    if (isPrivate) {
-      setPrivateAttachments(prev => [...prev, ...files])
-    } else {
-      setPublicAttachments(prev => [...prev, ...files])
-    }
-  }
-
-  const removeAttachment = (index: number, isPrivate: boolean) => {
-    if (isPrivate) {
-      setPrivateAttachments(prev => prev.filter((_, i) => i !== index))
-    } else {
-      setPublicAttachments(prev => prev.filter((_, i) => i !== index))
-    }
-  }
-
-  const downloadAttachment = (attachment: Attachment) => {
-    const link = document.createElement('a')
-    link.href = attachment.data
-    link.download = attachment.name
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-  }
-
-  const previewAttachmentDialog = (attachment: Attachment) => {
-    setPreviewAttachment(attachment)
-    setPreviewDialogOpen(true)
-  }
-
-  const sendPublicMessage = async () => {
-    if ((!messageInput.trim() && publicAttachments.length === 0) || !profile.name) return
-    
-    const attachments = await processFiles(publicAttachments)
-    const message = createMessage(messageInput, attachments)
-    
-    // Always add to local state immediately
-    setPublicMessages(prev => [...prev, message])
-    
-    // Send via BroadcastChannel if available
-    if (publicChannelRef.current) {
-      publicChannelRef.current.postMessage(message)
-    }
-    
-    // Save to database if configured
-    if (dbService && dbService.isSupabaseConfigured()) {
-      try {
-        await dbService.saveMessage('public', dbService.convertToDatabaseMessage(message))
-      } catch (error) {
-        console.error('Error saving message to database:', error)
-      }
-    }
-    
-    setMessageInput('')
-    setPublicAttachments([])
-  }
-
-  const sendPrivateMessage = async () => {
-    if ((!privateMessageInput.trim() && privateAttachments.length === 0) || !p2pRoom.dataChannel || p2pRoom.dataChannel.readyState !== 'open') return
-    
-    const attachments = await processFiles(privateAttachments)
-    const message = createMessage(privateMessageInput, attachments, true)
-    
-    // Always add to local state immediately
-    setPrivateMessages(prev => [...prev, message])
-    
-    // Send via DataChannel
-    p2pRoom.dataChannel.send(JSON.stringify(message))
-    
-    // Save to database if configured
-    if (dbService && dbService.isSupabaseConfigured()) {
-      try {
-        await dbService.saveMessage('private', dbService.convertToDatabaseMessage(message))
-      } catch (error) {
-        console.error('Error saving private message to database:', error)
-      }
-    }
-    
-    setPrivateMessageInput('')
-    setPrivateAttachments([])
-  }
-
-  const createP2POffer = async () => {
-    try {
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      })
-      
-      const dc = pc.createDataChannel('chat')
-      setupDataChannel(dc)
-      
-      const offer = await pc.createOffer()
-      await pc.setLocalDescription(offer)
-      
-      setP2pRoom({
-        id: Math.random().toString(36).substr(2, 9),
-        peerConnection: pc,
-        dataChannel: dc,
-        isConnected: false,
-        isHost: true
-      })
-      
-      setSdpOffer(JSON.stringify(pc.localDescription))
     } catch (error) {
-      console.error('Error creating offer:', error)
-      alert('Failed to create P2P offer. Please check browser support.')
+      console.error('Error selecting room:', error)
     }
   }
 
-  const acceptP2POffer = async () => {
+  // Handle room click
+  const handleRoomClick = async (room: DatabaseRoom) => {
+    if (!dbService) return
+
+    if (room.type === 'private' && !isAuthenticated) {
+      setSelectedRoomForPassword(room)
+      setAuthDialogOpen('login')
+      return
+    }
+
+    await selectRoom(room, dbService)
+  }
+
+  // Handle private room password entry
+  const handlePrivateRoomJoin = async (password: string) => {
+    if (!dbService || !selectedRoomForPassword) {
+      return { success: false, error: 'Room not selected' }
+    }
+
     try {
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      })
-      
-      pc.ondatachannel = (event) => {
-        const dc = event.channel
-        setupDataChannel(dc)
-        setP2pRoom(prev => ({ ...prev, dataChannel: dc, peerConnection: pc, isHost: false }))
+      const result = await dbService.joinRoom(selectedRoomForPassword.id, password)
+      if (result.success) {
+        await selectRoom(selectedRoomForPassword, dbService)
+        setShowPasswordDialog(false)
+        setSelectedRoomForPassword(null)
       }
-      
-      const offerText = sdpOffer
-      if (!offerText) {
-        alert('Please paste the offer first')
-        return
-      }
-      
-      const offer = JSON.parse(offerText)
-      await pc.setRemoteDescription(offer)
-      
-      const answer = await pc.createAnswer()
-      await pc.setLocalDescription(answer)
-      
-      setSdpAnswer(JSON.stringify(pc.localDescription))
+      return result
     } catch (error) {
-      console.error('Error accepting offer:', error)
-      alert('Failed to accept P2P offer. Please check the offer format.')
+      return { success: false, error: 'Failed to join room' }
     }
   }
 
-  const finalizeP2PConnection = async () => {
+  // Handle private room creation
+  const handleCreatePrivateRoom = async (roomName: string, password: string) => {
     try {
-      if (!p2pRoom.peerConnection || !sdpAnswer) {
-        alert('Please paste the answer first')
-        return
+      const result = await createPrivateRoom(roomName, password)
+      if (result.roomId) {
+        if (dbService) {
+          await loadRooms(dbService)
+        }
+        return { roomId: result.roomId }
       }
-      
-      const answer = JSON.parse(sdpAnswer)
-      await p2pRoom.peerConnection.setRemoteDescription(answer)
-      setConnectionStatus('connected')
+      return { roomId: '', error: result.error }
     } catch (error) {
-      console.error('Error finalizing connection:', error)
-      alert('Failed to finalize P2P connection. Please check the answer format.')
+      return { roomId: '', error: 'Failed to create room' }
     }
   }
 
-  const setupDataChannel = (dc: RTCDataChannel) => {
-    dc.onopen = () => {
-      setConnectionStatus('connected')
-      setP2pRoom(prev => ({ ...prev, isConnected: true }))
-    }
-    
-    dc.onmessage = (event) => {
-      try {
-        const message: Message = JSON.parse(event.data)
-        setPrivateMessages(prev => [...prev, message])
-      } catch (error) {
-        console.error('Error parsing message:', error)
+  // Handle private room management
+  const handleClearPrivateRoom = async (roomId: string) => {
+    if (!dbService) return { success: false, error: 'Database service not available' }
+
+    try {
+      const result = await dbService.clearPrivateRoom(roomId)
+      if (result.success && currentRoom?.id === roomId) {
+        setMessages([])
       }
-    }
-    
-    dc.onclose = () => {
-      setConnectionStatus('disconnected')
-      resetP2PConnection()
+      return result
+    } catch (error) {
+      return { success: false, error: 'Failed to clear room' }
     }
   }
 
-  const resetP2PConnection = () => {
-    setP2pRoom({
-      id: '',
-      peerConnection: null,
-      dataChannel: null,
-      isConnected: false,
-      isHost: false
-    })
-    setSdpOffer('')
-    setSdpAnswer('')
-    setConnectionStatus('disconnected')
+  const handleChangePassword = async (newPassword: string) => {
+    // This would need to be implemented in the database service
+    // For now, return a placeholder
+    return { success: true, error: undefined }
   }
 
+  // Check if user is room owner
+  const isRoomOwner = (room: DatabaseRoom) => {
+    return room.owner_id === currentUser?.id
+  }
+
+  // Profile management
   const updateProfile = (name: string, avatar: string) => {
     setProfile({ name, avatar })
+    localStorage.setItem('chatProfile', JSON.stringify({ name, avatar }))
     setProfileDialogOpen(false)
-    
-    // Update database if authenticated
+
     if (dbService && dbService.isSupabaseConfigured() && currentUser) {
       dbService.saveUserProfile({
         display_name: name,
@@ -431,75 +263,92 @@ export default function ChatApp() {
     }
   }
 
-  const clearChatHistory = async (isPrivate: boolean) => {
-    if (!dbService || !dbService.isSupabaseConfigured()) return
-    
+  // Message sending
+  const sendMessage = async () => {
+    if (!currentRoom || (!messageInput.trim() && attachments.length === 0) || !profile.name) return
+
+    if (!dbService) return
+
     try {
-      setIsLoading(true)
-      const roomId = isPrivate ? 'private' : 'public'
-      const success = await dbService.clearChatHistory(roomId)
-      
-      if (success) {
-        if (isPrivate) {
-          setPrivateMessages([])
-        } else {
-          setPublicMessages([])
-        }
-        setClearHistoryDialogOpen(false)
+      const processedAttachments = await processFiles(attachments)
+
+      // Create message object
+      const messageData = {
+        room_id: currentRoom.id,
+        user_name: profile.name,
+        user_avatar: profile.avatar,
+        content: messageInput,
+        attachments: processedAttachments,
+        timestamp: new Date().toISOString()
+      }
+
+      const dbMessage = await dbService.sendMessage(
+        currentRoom.id,
+        messageInput,
+        profile.name,
+        profile.avatar
+      )
+
+      if (dbMessage) {
+        const newMessage = dbService.convertFromDatabaseMessage(dbMessage)
+        newMessage.isOwn = true
+        setMessages(prev => [...prev, newMessage])
+
+        setMessageInput('')
+        setAttachments([])
       }
     } catch (error) {
-      console.error('Error clearing chat history:', error)
-    } finally {
-      setIsLoading(false)
+      console.error('Error sending message:', error)
     }
   }
 
-  const clearAllChatHistory = async () => {
-    if (!dbService || !dbService.isSupabaseConfigured()) return
-    
-    try {
-      setIsLoading(true)
-      const success = await dbService.clearAllChatHistory()
-      
-      if (success) {
-        setPublicMessages([])
-        setPrivateMessages([])
-        setClearHistoryDialogOpen(false)
+  // File processing
+  const processFiles = async (files: File[]): Promise<Attachment[]> => {
+    const processedFiles: Attachment[] = []
+    for (const file of files) {
+      if (file.size > 10 * 1024 * 1024) {
+        alert(`File ${file.name} is too large. Maximum size is 10MB.`)
+        continue
       }
-    } catch (error) {
-      console.error('Error clearing all chat history:', error)
-    } finally {
-      setIsLoading(false)
+      const attachment = await fileToAttachment(file)
+      processedFiles.push(attachment)
     }
+    return processedFiles
   }
 
-  const saveUserSettings = async () => {
-    if (!dbService || !dbService.isSupabaseConfigured()) return
-    
-    try {
-      await dbService.saveUserSettings({
-        auto_clear_history: autoClearHistory,
-        clear_after_days: clearAfterDays
-      })
-    } catch (error) {
-      console.error('Error saving user settings:', error)
-    }
+  const fileToAttachment = async (file: File): Promise<Attachment> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        resolve({
+          id: Math.random().toString(36).substr(2, 9),
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          data: reader.result as string,
+          url: reader.result as string
+        })
+      }
+      reader.readAsDataURL(file)
+    })
   }
 
+  // Auth handlers
   const handleSignIn = async () => {
-    if (!dbService || !email.trim() || !password.trim()) return
-    
+    if (!email.trim() || !password.trim()) return
+
     try {
       setAuthLoading(true)
       setAuthError('')
-      
+
       const result = await signInWithEmail(email, password)
-      
-      if (result.error) {
+
+      if ('error' in result) {
         setAuthError(result.error)
       } else {
         setAuthDialogOpen(null)
-        // Profile will be updated by auth state change listener
+        setCurrentUser(result.user)
+        setIsAuthenticated(true)
       }
     } catch (error) {
       setAuthError('Login failed. Please try again.')
@@ -509,19 +358,20 @@ export default function ChatApp() {
   }
 
   const handleSignUp = async () => {
-    if (!dbService || !signUpEmail.trim() || !signUpPassword.trim() || !signUpName.trim()) return
-    
+    if (!signUpEmail.trim() || !signUpPassword.trim() || !signUpName.trim()) return
+
     try {
       setAuthLoading(true)
       setAuthError('')
-      
+
       const result = await signUpWithEmail(signUpEmail, signUpPassword, signUpName)
-      
-      if (result.error) {
+
+      if ('error' in result) {
         setAuthError(result.error)
       } else {
         setAuthDialogOpen(null)
-        // Profile will be updated by auth state change listener
+        setCurrentUser(result.user)
+        setIsAuthenticated(true)
       }
     } catch (error) {
       setAuthError('Registration failed. Please try again.')
@@ -531,159 +381,319 @@ export default function ChatApp() {
   }
 
   const handleSignOut = async () => {
-    if (!dbService) return
-    
     try {
       await signOut()
       setCurrentUser(null)
       setIsAuthenticated(false)
       setAuthDialogOpen(null)
+
+      // Switch to public room if currently in private room
+      if (currentRoom?.type === 'private') {
+        const publicRoom = rooms.find(room => room.type === 'public')
+        if (publicRoom && dbService) {
+          await selectRoom(publicRoom, dbService)
+        }
+      }
     } catch (error) {
       console.error('Error signing out:', error)
     }
   }
 
-  const [sdpOffer, setSdpOffer] = useState('')
-  const [sdpAnswer, setSdpAnswer] = useState('')
-  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
+  // Utility functions
+  const formatTime = (timestamp: Date | string) => {
+    const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+  }
 
-  const renderAttachment = (attachment: Attachment) => {
+  const getFileIcon = (type: string) => {
+    if (type.startsWith('image/')) return <Database className="w-4 h-4" />
+    if (type.startsWith('video/')) return <Database className="w-4 h-4" />
+    if (type.startsWith('audio/')) return <Database className="w-4 h-4" />
+    return <Database className="w-4 h-4" />
+  }
+
+  const renderAttachment = (attachment: any) => {
     const isImage = attachment.type.startsWith('image/')
-    const isVideo = attachment.type.startsWith('video/')
-    const isAudio = attachment.type.startsWith('audio/')
-    
+
     return (
-      <div key={attachment.id} className="border border-green-400 bg-black p-2 rounded">
+      <div key={attachment.id} className="border border-green-400 bg-black p-2 rounded mt-2">
         <div className="flex items-center gap-2 mb-2">
           {getFileIcon(attachment.type)}
           <span className="text-xs truncate flex-1">{attachment.name}</span>
-          <span className="text-xs opacity-70">{formatFileSize(attachment.size)}</span>
         </div>
-        
+
         {isImage && (
-          <img 
-            src={attachment.url} 
+          <img
+            src={attachment.url}
             alt={attachment.name}
             className="max-w-full h-32 object-cover rounded cursor-pointer hover:opacity-80"
-            onClick={() => previewAttachmentDialog(attachment)}
           />
         )}
-        
-        {isVideo && (
-          <video 
-            src={attachment.url}
-            controls
-            className="max-w-full h-32 rounded"
-          />
-        )}
-        
-        {isAudio && (
-          <audio 
-            src={attachment.url}
-            controls
-            className="w-full"
-          />
-        )}
-        
-        {!isImage && !isVideo && !isAudio && (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => previewAttachmentDialog(attachment)}
-              className="text-xs bg-green-400 text-black px-2 py-1 rounded hover:bg-green-300"
-            >
-              Preview
-            </button>
-            <button
-              onClick={() => downloadAttachment(attachment)}
-              className="text-xs bg-green-400 text-black px-2 py-1 rounded hover:bg-green-300"
-            >
-              Download
-            </button>
-          </div>
-        )}
-      </div>
-    )
-  }
 
-  const renderAttachments = (attachments: Attachment[]) => {
-    if (!attachments || attachments.length === 0) return null
-    
-    return (
-      <div className="space-y-2 mt-2">
-        {attachments.map(renderAttachment)}
+        {!isImage && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-xs"
+            onClick={() => {
+              const link = document.createElement('a')
+              link.href = attachment.data
+              link.download = attachment.name
+              link.click()
+            }}
+          >
+            Download
+          </Button>
+        )}
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-black text-green-400 font-mono p-4 relative overflow-hidden">
-      {/* Scanlines effect */}
-      <div className="absolute inset-0 pointer-events-none opacity-20">
-        <div className="h-px bg-green-400 w-full animate-pulse"></div>
-      </div>
-
-      <div className="relative z-10 max-w-6xl mx-auto">
+    <div className="min-h-screen bg-black text-green-400 font-mono p-4">
+      <div className="max-w-6xl mx-auto space-y-4">
         {/* Header */}
-        <div className="retro-border p-4 mb-4 relative">
-          <div className="absolute top-0 left-0 right-0 h-6 bg-green-400 flex items-center justify-center">
-            <div className="text-xs font-bold">RETRO CHAT v1.0</div>
-          </div>
-          <div className="mt-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 border-2 border-green-400 bg-black flex items-center justify-center">
-                {currentUser?.user_metadata?.avatar_url ? (
-                  <img 
-                    src={currentUser.user_metadata.avatar_url} 
-                    alt={`${currentUser.user_metadata.display_name}'s avatar`} 
-                    className="w-10 h-10" 
-                  />
-                ) : (
-                  <User className="w-6 h-6" />
-                )}
-              </div>
-              <div>
-                <div className="text-green-400 font-bold">{currentUser?.user_metadata?.display_name || 'Guest'}</div>
-                <div className="text-xs text-green-600">
-                  {isAuthenticated ? 'ONLINE' : 'OFFLINE'}
-                  {dbService && dbService.isSupabaseConfigured() ? '• AUTHENTICATED' : '• LOCAL'}
+        <Card className="bg-black border-green-400">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 border-2 border-green-400 bg-black flex items-center justify-center">
+                  {currentUser?.user_metadata?.avatar_url ? (
+                    <img src={currentUser.user_metadata.avatar_url} className="w-8 h-8" />
+                  ) : (
+                    <User className="w-5 h-5" />
+                  )}
+                </div>
+                <div>
+                  <div className="text-green-400 font-bold">
+                    {currentUser?.user_metadata?.display_name || profile.name || 'Guest'}
+                  </div>
+                  <div className="text-xs text-green-600">
+                    {isAuthenticated ? 'AUTHENTICATED' : 'ANONYMOUS'}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="flex gap-2">
-              <Button 
-                onClick={() => setAuthDialogOpen('login')} 
-                variant="outline" 
-                className="border-green-400 text-green-400 hover:bg-green-400 hover:text-black"
-                disabled={isAuthenticated}
-              >
-                {isAuthenticated ? 'ACCOUNT' : 'LOGIN'}
-              </Button>
-              <Button 
-                onClick={() => setAuthDialogOpen('profile')} 
-                variant="outline" 
-                className="border-green-400 text-green-400 hover:bg-green-400 hover:text-black"
-                disabled={!isAuthenticated}
-              >
-                PROFILE
-              </Button>
-              {isAuthenticated && (
-                <Button 
-                  onClick={handleSignOut} 
-                  variant="outline" 
-                  className="border-red-500 text-red-500 hover:bg-red-500 hover:text-black"
+
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => setAuthDialogOpen(isAuthenticated ? 'profile' : 'login')}
+                  variant="outline"
+                  className="border-green-400 text-green-400 hover:bg-green-400 hover:text-black"
                 >
-                  LOGOUT
+                  {isAuthenticated ? 'PROFILE' : 'LOGIN'}
                 </Button>
-              )}
+
+                {isAuthenticated && (
+                  <>
+                    <Button
+                      onClick={() => setShowCreateRoomDialog(true)}
+                      variant="outline"
+                      className="border-green-400 text-green-400 hover:bg-green-400 hover:text-black"
+                    >
+                      <Plus className="w-4 h-4 mr-1" />
+                      CREATE ROOM
+                    </Button>
+                    <Button
+                      onClick={handleSignOut}
+                      variant="outline"
+                      className="border-red-500 text-red-500 hover:bg-red-500 hover:text-black"
+                    >
+                      LOGOUT
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
+          </CardHeader>
+        </Card>
+
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+          {/* Room List */}
+          <Card className="bg-black border-green-400 lg:col-span-1">
+            <CardHeader>
+              <CardTitle className="text-green-400 text-sm">ROOMS</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {rooms.map((room) => (
+                <Button
+                  key={room.id}
+                  onClick={() => handleRoomClick(room)}
+                  variant={currentRoom?.id === room.id ? "default" : "outline"}
+                  className={`w-full justify-start ${
+                    currentRoom?.id === room.id
+                      ? 'bg-green-400 text-black'
+                      : 'border-green-400 text-green-400 hover:bg-green-400 hover:text-black'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 w-full">
+                    {room.type === 'private' && <Lock className="w-4 h-4" />}
+                    {room.type === 'public' && <Users className="w-4 h-4" />}
+                    <span className="truncate flex-1 text-left">{room.name}</span>
+                    {room.type === 'public' && (
+                      <Badge variant="outline" className="text-xs">
+                        24h
+                      </Badge>
+                    )}
+                  </div>
+                </Button>
+              ))}
+            </CardContent>
+          </Card>
+
+          {/* Chat Area */}
+          <Card className="bg-black border-green-400 lg:col-span-3">
+            <CardHeader>
+              <CardTitle className="text-green-400 text-sm flex items-center gap-2">
+                {currentRoom?.type === 'private' && <Lock className="w-4 h-4" />}
+                {currentRoom?.type === 'public' && <Users className="w-4 h-4" />}
+                {currentRoom?.name || 'Select a room'}
+                {currentRoom?.type === 'public' && (
+                  <Badge variant="outline" className="text-xs">
+                    Messages auto-delete after 24 hours
+                  </Badge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {currentRoom ? (
+                <>
+                  {/* Room Management for Private Room Owners */}
+                  {currentRoom.type === 'private' && isRoomOwner(currentRoom) && (
+                    <div className="mb-4">
+                      <PrivateRoomManagement
+                        roomId={currentRoom.id}
+                        roomName={currentRoom.name}
+                        isOwner={true}
+                        onClearHistory={() => handleClearPrivateRoom(currentRoom.id)}
+                        onChangePassword={handleChangePassword}
+                      />
+                    </div>
+                  )}
+
+                  {/* Messages */}
+                  <ScrollArea className="h-96 w-full border-2 border-green-400 bg-black p-4 mb-4">
+                    <div className="space-y-2">
+                      {messages.length === 0 ? (
+                        <div className="text-center text-xs text-green-600">
+                          No messages yet. Start chatting!
+                        </div>
+                      ) : (
+                        messages.map((msg) => (
+                          <div key={msg.id} className={`flex gap-2 ${msg.isOwn ? 'justify-end' : 'justify-start'}`}>
+                            {!msg.isOwn && (
+                              <div className="w-8 h-8 border-2 border-green-400 bg-black flex-shrink-0 flex items-center justify-center">
+                                {msg.avatar ? (
+                                  <img src={msg.avatar} alt={msg.author} className="w-6 h-6" />
+                                ) : (
+                                  <User className="w-4 h-4" />
+                                )}
+                              </div>
+                            )}
+                            <div className={`max-w-xs ${msg.isOwn ? 'text-right' : 'text-left'}`}>
+                              <div className="text-xs text-green-600 mb-1">{msg.author}</div>
+                              {msg.content && (
+                                <div className={`border border-green-400 bg-black p-2 ${msg.isOwn ? 'bg-green-950' : ''}`}>
+                                  {msg.content}
+                                </div>
+                              )}
+                              {msg.attachments?.map(renderAttachment)}
+                              <div className="text-xs text-green-600 mt-1">{formatTime(msg.timestamp)}</div>
+                            </div>
+                            {msg.isOwn && (
+                              <div className="w-8 h-8 border-2 border-green-400 bg-black flex-shrink-0 flex items-center justify-center">
+                                {msg.avatar ? (
+                                  <img src={msg.avatar} alt={msg.author} className="w-6 h-6" />
+                                ) : (
+                                  <User className="w-4 h-4" />
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </ScrollArea>
+
+                  {/* Message Input */}
+                  <div className="space-y-2">
+                    {attachments.map(renderAttachment)}
+                    <div className="flex gap-2">
+                      <input
+                        type="file"
+                        multiple
+                        onChange={(e) => setAttachments(Array.from(e.target.files || []))}
+                        className="hidden"
+                        id="fileInput"
+                      />
+                      <Button
+                        onClick={() => document.getElementById('fileInput')?.click()}
+                        variant="outline"
+                        className="border-green-400 text-green-400 hover:bg-green-400 hover:text-black"
+                        disabled={!profile.name}
+                      >
+                        <Database className="w-4 h-4 mr-2" />
+                        ATTACH
+                      </Button>
+                      <Input
+                        value={messageInput}
+                        onChange={(e) => setMessageInput(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                        className="bg-black border-green-400 text-green-400 placeholder-green-700 flex-1"
+                        placeholder="Type your message..."
+                        disabled={!profile.name}
+                      />
+                      <Button
+                        onClick={sendMessage}
+                        disabled={(!messageInput.trim() && attachments.length === 0) || !profile.name}
+                        className="bg-green-400 text-black hover:bg-green-300"
+                      >
+                        <Send className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="text-center text-green-600 py-8">
+                  Select a room to start chatting
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
+
+        {/* Profile Dialog */}
+        <Dialog open={!profile.name} onOpenChange={() => {}}>
+          <DialogContent className="bg-black border-green-400 text-green-400">
+            <DialogHeader>
+              <DialogTitle>SET YOUR PROFILE</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="profile-name">Display Name</Label>
+                <Input
+                  id="profile-name"
+                  value={profile.name}
+                  onChange={(e) => setProfile(prev => ({ ...prev, name: e.target.value }))}
+                  className="bg-black border-green-400 text-green-400"
+                  placeholder="Enter your name"
+                />
+              </div>
+              <Button
+                onClick={() => updateProfile(profile.name, profile.avatar)}
+                disabled={!profile.name.trim()}
+                className="w-full bg-green-400 text-black hover:bg-green-300"
+              >
+                Start Chatting
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Auth Dialogs */}
         <Dialog open={authDialogOpen === 'login'} onOpenChange={() => setAuthDialogOpen(null)}>
           <DialogContent className="bg-black border-green-400 text-green-400">
             <DialogHeader>
-              <DialogTitle className="text-green-400">LOGIN</DialogTitle>
+              <DialogTitle>LOGIN</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               {authError && (
@@ -713,15 +723,20 @@ export default function ChatApp() {
                   placeholder="Enter your password"
                 />
               </div>
-              <div className="flex gap-2">
-                <Button 
-                  onClick={handleSignIn}
-                  disabled={authLoading}
-                  className="flex-1 bg-green-400 text-black hover:bg-green-300"
-                >
-                  {authLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : 'LOGIN'}
-                </Button>
-              </div>
+              <Button
+                onClick={handleSignIn}
+                disabled={authLoading}
+                className="w-full bg-green-400 text-black hover:bg-green-300"
+              >
+                {authLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : 'LOGIN'}
+              </Button>
+              <Button
+                onClick={() => setAuthDialogOpen('register')}
+                variant="outline"
+                className="w-full border-green-400 text-green-400 hover:bg-green-400 hover:text-black"
+              >
+                Don't have an account? Sign Up
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -729,7 +744,7 @@ export default function ChatApp() {
         <Dialog open={authDialogOpen === 'register'} onOpenChange={() => setAuthDialogOpen(null)}>
           <DialogContent className="bg-black border-green-400 text-green-400">
             <DialogHeader>
-              <DialogTitle className="text-green-400">SIGN UP</DialogTitle>
+              <DialogTitle>SIGN UP</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               {authError && (
@@ -770,17 +785,17 @@ export default function ChatApp() {
                 />
               </div>
               <div className="flex gap-2">
-                <Button 
+                <Button
                   onClick={handleSignUp}
                   disabled={authLoading}
                   className="flex-1 bg-green-400 text-black hover:bg-green-300"
                 >
                   {authLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : 'SIGN UP'}
                 </Button>
-                <Button 
+                <Button
                   onClick={() => setAuthDialogOpen('login')}
                   variant="outline"
-                  className="border-green-400 text-green-400 hover:bg-green-400 hover:text-black"
+                  className="flex-1 border-green-400 text-green-400 hover:bg-green-400 hover:text-black"
                 >
                   BACK TO LOGIN
                 </Button>
@@ -789,408 +804,34 @@ export default function ChatApp() {
           </DialogContent>
         </Dialog>
 
-        {/* Main Chat Interface */}
-        <Tabs defaultValue="public" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-2 bg-black border-green-400 border">
-            <TabsTrigger value="public" className="data-[state=active]:bg-green-400 data-[state=active]:text-black text-green-400">
-              <Users className="w-4 h-4 mr-2" />
-              PUBLIC ROOM
-            </TabsTrigger>
-            <TabsTrigger value="private" className="data-[state=active]:bg-green-400 data-[state=active]:text-black text-green-400">
-              <Lock className="w-4 h-4 mr-2" />
-              PRIVATE ROOM
-            </TabsTrigger>
-          </TabsList>
+        {/* Private Room Password Dialog */}
+        <PrivateRoomPasswordDialog
+          isOpen={showPasswordDialog}
+          onClose={() => {
+            setShowPasswordDialog(false)
+            setSelectedRoomForPassword(null)
+          }}
+          onJoin={handlePrivateRoomJoin}
+          roomName={selectedRoomForPassword?.name || ''}
+        />
 
-          {/* Public Room */}
-          <TabsContent value="public" className="space-y-4">
-            <Card className="bg-black border-green-400">
-              <CardHeader>
-                <CardTitle className="text-green-400 text-sm flex items-center gap-2">
-                  <Users className="w-4 h-4 mr-2" />
-                  PUBLIC CHAT ROOM
-                  <Badge variant="outline" className="border-green-400 text-green-400">
-                    {dbService && dbService.isSupabaseConfigured() ? 'PERSISTENT' : 'TEMPORARY'}
-                  </Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-96 w-full border-2 border-green-400 bg-black p-4 mb-4">
-                  <div className="space-y-2">
-                    {publicMessages.length === 0 ? (
-                      <div className="text-center text-xs text-green-600">No messages yet. Start chatting!</div>
-                    ) : (
-                      publicMessages.map((msg, index) => (
-                        <div key={msg.id} className={`flex gap-2 ${msg.isOwn ? 'justify-end' : 'justify-start'}`}>
-                          {!msg.isOwn && (
-                            <div className="w-8 h-8 border-2 border-green-400 bg-black flex-shrink-0 flex items-center justify-center">
-                              {msg.avatar ? (
-                                <img src={msg.avatar} alt={msg.author} className="w-6 h-6" />
-                              ) : (
-                                <User className="w-4 h-4" />
-                              )}
-                            </div>
-                          )}
-                          <div className={`max-w-xs ${msg.isOwn ? 'text-right' : 'text-left'}`}>
-                            <div className="text-xs text-green-600 mb-1">{msg.author}</div>
-                            {msg.content && (
-                              <div className={`border border-green-400 bg-black p-2 ${msg.isOwn ? 'bg-green-950' : ''}`}>
-                                {msg.content}
-                              </div>
-                            )}
-                            {renderAttachments(msg.attachments)}
-                            <div className="text-xs text-green-600 mt-1">{formatTime(msg.timestamp)}</div>
-                          </div>
-                          {msg.isOwn && (
-                            <div className="w-8 h-8 border-2 border-green-400 bg-black flex-shrink-0 flex items-center justify-center">
-                              {msg.avatar ? (
-                                <img src={msg.avatar} alt={msg.author} className="w-6 h-6" />
-                              ) : (
-                                <User className="w-4 h-4" />
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </ScrollArea>
-
-                <div className="space-y-2">
-                  {renderAttachments(publicAttachments)}
-                  <div className="flex gap-2">
-                    <input
-                      type="file"
-                      multiple
-                      onChange={(e) => handleFileSelect(e, false)}
-                      className="hidden"
-                      id="publicFileInput"
-                    />
-                    <Button
-                      onClick={() => document.getElementById('publicFileInput')?.click()}
-                      variant="outline"
-                      className="border-green-400 text-green-400 hover:bg-green-400 hover:text-black"
-                      disabled={!profile.name}
-                    >
-                      <Database className="w-4 h-4 mr-2" />
-                      ATTACH
-                    </Button>
-                    <Input
-                      value={messageInput}
-                      onChange={(e) => setMessageInput(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && sendPublicMessage()}
-                      className="bg-black border-green-400 text-green-400 placeholder-green-700 flex-1"
-                      placeholder="Type your message..."
-                      disabled={!profile.name}
-                    />
-                    <Button 
-                      onClick={sendPublicMessage}
-                      disabled={(!messageInput.trim() && publicAttachments.length === 0) || !profile.name}
-                      className="bg-green-400 text-black hover:bg-green-300"
-                    >
-                      <Send className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Private Room */}
-          <TabsContent value="private" className="space-y-4">
-            <Card className="bg-black border-green-400">
-              <CardHeader>
-                <CardTitle className="text-green-400 text-sm flex items-center gap-2">
-                  <Lock className="w-4 h-4 mr-2" />
-                  PRIVATE P2P ROOM
-                  <Badge variant="outline" className={`border-green-400 text-green-400 ${connectionStatus === 'connected' ? 'bg-green-600' : ''}`}>
-                    {connectionStatus.toUpperCase()}
-                  </Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {/* P2P Connection Setup */}
-                  {!p2pRoom.isConnected && (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <div className="text-xs text-green-600 mb-2">HOST: CREATE OFFER</div>
-                          <Button
-                            onClick={createP2POffer}
-                            disabled={connectionStatus === 'connecting'}
-                            className="w-full bg-green-400 text-black hover:bg-green-300"
-                          >
-                            {connectionStatus === 'connecting' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : 'CREATE OFFER'}
-                          </Button>
-                          {sdpOffer && (
-                            <Textarea
-                              value={sdpOffer}
-                              readOnly
-                              className="h-24 bg-black border-green-400 text-green-400 text-xs p-2"
-                              placeholder="Offer will appear here..."
-                            />
-                          )}
-                          {sdpOffer && (
-                            <Button
-                              onClick={() => navigator.clipboard.writeText(sdpOffer)}
-                              variant="outline"
-                              className="border-green-400 text-green-400 hover:bg-green-400 hover:text-black"
-                            >
-                              <Copy className="w-4 h-4 mr-2" />
-                              COPY OFFER
-                            </Button>
-                          )}
-                        </div>
-                        
-                        <div className="space-y-2">
-                          <div className="text-xs text-green-600 mb-2">GUEST: JOIN ROOM</div>
-                          <Textarea
-                            value={sdpOffer}
-                            onChange={(e) => setSdpOffer(e.target.value)}
-                            className="h-24 bg-black border-green-400 text-green-400 text-xs p-2"
-                            placeholder="Paste offer here..."
-                          />
-                          <Button
-                            onClick={acceptP2POffer}
-                            disabled={connectionStatus === 'connecting'}
-                            className="w-full bg-green-400 text-black hover:bg-green-300"
-                          >
-                              {connectionStatus === 'connecting' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : 'CREATE ANSWER'}
-                          </Button>
-                          {sdpAnswer && (
-                            <Textarea
-                              value={sdpAnswer}
-                              readOnly
-                              className="h-24 bg-black border-green-400 text-green-400 text-xs p-2"
-                              placeholder="Answer will appear here..."
-                            />
-                          )}
-                          {sdpAnswer && (
-                            <Button
-                              onClick={() => navigator.clipboard.writeText(sdpAnswer)}
-                              variant="outline"
-                              className="border-green-400 text-green-400 hover:bg-green-400 hover:text-black"
-                            >
-                              <Copy className="w-4 h-4 mr-2" />
-                              COPY ANSWER
-                            </Button>
-                          )}
-                        </div>
-                        
-                        <div className="space-y-2">
-                          <div className="text-xs text-green-600 mb-2">HOST: FINALIZE CONNECTION</div>
-                          <Textarea
-                            value={sdpAnswer}
-                            onChange={(e) => setSdpAnswer(e.target.value)}
-                            className="h-24 bg-black border-green-400 text-green-400 text-xs p-2"
-                            placeholder="Paste answer here..."
-                          />
-                          <Button
-                            onClick={finalizeP2PConnection}
-                            disabled={connectionStatus === 'connecting'}
-                            className="w-full bg-green-400 text-black hover:bg-green-300"
-                          >
-                              {connectionStatus === 'connecting' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : 'CONNECT'}
-                          </Button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Private Chat */}
-                  <div className="space-y-4">
-                    <ScrollArea className="h-64 w-full border-2 border-green-400 bg-black p-4 mb-4">
-                      <div className="space-y-2">
-                        {privateMessages.length === 0 ? (
-                          <div className="text-center text-xs text-green-600">
-                            {connectionStatus === 'connected' ? 'Connected! Start chatting...' : 'Connect to start chatting'}
-                          </div>
-                        ) : (
-                          privateMessages.map((msg, index) => (
-                            <div key={msg.id} className={`flex gap-2 ${msg.isOwn ? 'justify-end' : 'justify-start'}`}>
-                              {!msg.isOwn && (
-                                <div className="w-8 h-8 border-2 border-green-400 bg-black flex-shrink-0 flex items-center justify-center">
-                                  {msg.avatar ? (
-                                    <img src={msg.avatar} alt={msg.author} className="w-6 h-6" />
-                                  ) : (
-                                    <User className="w-4 h-4" />
-                                  )}
-                                </div>
-                              )}
-                              <div className={`max-w-xs ${msg.isOwn ? 'text-right' : 'text-left'}`}>
-                                  <div className="text-xs text-green-600 mb-1">{msg.author}</div>
-                                  {msg.content && (
-                                    <div className={`border border-green-400 bg-black p-2 ${msg.isOwn ? 'bg-green-950' : ''}`}>
-                                      {msg.content}
-                                    </div>
-                                  )}
-                                  {renderAttachments(msg.attachments)}
-                                  <div className="text-xs text-green-600 mt-1">{formatTime(msg.timestamp)}</div>
-                              </div>
-                              {msg.isOwn && (
-                                <div className="w-8 h-8 border-2 border-green-400 bg-black flex-shrink-0 flex items-center justify-center">
-                                  {msg.avatar ? (
-                                    <img src={msg.avatar} alt={msg.author} className="w-6 h-6" />
-                                  ) : (
-                                    <User className="w-4 h-4" />
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </ScrollArea>
-
-                    <div className="space-y-2">
-                      {renderAttachments(privateAttachments)}
-                      <div className="flex gap-2">
-                        <input
-                          type="file"
-                          multiple
-                          onChange={(e) => handleFileSelect(e, true)}
-                          className="hidden"
-                          id="privateFileInput"
-                        />
-                        <Button
-                          onClick={() => document.getElementById('privateFileInput')?.click()}
-                          variant="outline"
-                          className="border-green-400 text-green-400 hover:bg-green-400 hover:text-black"
-                          disabled={!p2pRoom.isConnected}
-                        >
-                          <Database className="w-4 h-4 mr-2" />
-                          ATTACH
-                        </Button>
-                        <Input
-                          value={privateMessageInput}
-                          onChange={(e) => setPrivateMessageInput(e.target.value)}
-                          onKeyPress={(e) => e.key === 'Enter' && sendPrivateMessage()}
-                          className="bg-black border-green-400 text-green-400 placeholder-green-700 flex-1"
-                          placeholder="Type your private message..."
-                          disabled={!p2pRoom.isConnected}
-                        />
-                        <Button 
-                          onClick={sendPrivateMessage}
-                          disabled={(!privateMessageInput.trim() && privateAttachments.length === 0) || !p2pRoom.isConnected}
-                          className="bg-green-400 text-black hover:bg-green-300"
-                        >
-                          <Send className="w-4 h-4" />
-                        </Button>
-                      </div>
-                      
-                      {p2pRoom.isConnected && (
-                        <Button 
-                          onClick={resetP2PConnection}
-                          variant="outline"
-                          className="border-red-500 text-red-500 hover:bg-red-500 hover:text-black"
-                        >
-                          DISCONNECT
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-
-        {/* Clear History Dialog */}
-        <Dialog open={clearHistoryDialogOpen} onOpenChange={setClearHistoryDialogOpen}>
-          <DialogContent className="bg-black border-green-400 text-green-400">
-            <DialogHeader>
-              <DialogTitle className="text-green-400 flex items-center gap-2">
-                <Trash2 className="w-4 h-4" />
-                CLEAR CHAT HISTORY
-              </DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="flex items-center space-x-2">
-                <Checkbox 
-                  id="autoClear"
-                  checked={autoClearHistory}
-                  onCheckedChange={setAutoClearHistory}
-                />
-                <Label htmlFor="autoClear" className="text-xs">
-                  Automatically clear history after {clearAfterDays} days
-                </Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Label htmlFor="clearDays" className="text-xs">Clear after:</Label>
-                <Input
-                  id="clearDays"
-                  type="number"
-                  min="1"
-                  max="365"
-                  value={clearAfterDays.toString()}
-                  onChange={(e) => setClearAfterDays(parseInt(e.target.value) || 30)}
-                  className="bg-black border-green-400 text-green-400 w-20"
-                />
-                <span className="text-xs">days</span>
-              </div>
-              </div>
-              
-              <div className="space-y-2">
-                <Button 
-                  onClick={() => clearChatHistory(false)}
-                  disabled={isLoading}
-                  className="w-full bg-green-400 text-black hover:bg-green-300"
-                >
-                  {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
-                  CLEAR PUBLIC ROOM
-                </Button>
-                
-                <Button 
-                  onClick={() => clearChatHistory(true)}
-                  disabled={isLoading}
-                  className="w-full bg-green-400 text-black hover:bg-green-300"
-                >
-                  {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
-                  CLEAR PRIVATE ROOM
-                </Button>
-                
-                <Button 
-                  onClick={clearAllChatHistory}
-                  disabled={isLoading}
-                  variant="outline"
-                  className="w-full border-red-500 text-red-500 hover:bg-red-500 hover:text-black"
-                >
-                  {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
-                  CLEAR ALL CHAT HISTORY
-                </Button>
-              </div>
-              
-              <div className="space-y-2">
-                <Button 
-                  onClick={saveUserSettings}
-                  disabled={isLoading}
-                  className="w-full bg-green-400 text-black hover:bg-green-300"
-                >
-                  {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Database className="w-4 h-4 mr-2" />}
-                  SAVE SETTINGS
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+        {/* Create Private Room Dialog */}
+        <CreatePrivateRoomDialog
+          isOpen={showCreateRoomDialog}
+          onClose={() => setShowCreateRoomDialog(false)}
+          onCreate={handleCreatePrivateRoom}
+        />
 
         {/* Instructions */}
-        <Card className="mt-4 bg-black border-green-400">
+        <Card className="bg-black border-green-400">
           <CardHeader>
             <CardTitle className="text-green-400 text-sm">HOW TO USE</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-green-600 space-y-2">
-            <div><strong>PUBLIC ROOM:</strong> Works automatically between tabs on same browser using BroadcastChannel API.</div>
-            <div><strong>PRIVATE ROOM:</strong> Manual P2P connection required:</div>
-            <div>1. Host clicks "CREATE OFFER" → copies offer text</div>
-            <div>2. Guest pastes offer → clicks "CREATE ANSWER" → copies answer text</div>
-            <div>3. Host pastes answer → clicks "CONNECT"</div>
-            <div><strong>FILE SHARING:</strong> Click "ATTACH" to add files (max 10MB each). Supports images, videos, audio, documents, and archives.</div>
-            <div><strong>AUTHENTICATION:</strong> Click "LOGIN" to sign in with email. Click "SIGN UP" to register. Profile data is saved to database and persists across sessions.</div>
-            <div><strong>CLEAR HISTORY:</strong> Click "CLEAR HISTORY" to manage chat cleanup with optional auto-clear settings.</div>
-            <div><strong>DATABASE:</strong> {dbService && dbService.isSupabaseConfigured() ? 'Chat history is saved to database and persists across sessions.' : 'Database features disabled - history stored locally only.'}</div>
-            <div><strong>NOTE:</strong> P2P may fail behind strict NATs. No TURN server provided.</div>
+            <div><strong>PUBLIC ROOMS:</strong> Open to everyone. Messages auto-delete after 24 hours.</div>
+            <div><strong>PRIVATE ROOMS:</strong> Require authentication and a 4-digit password. Only room owners can clear chat history.</div>
+            <div><strong>CREATE ROOMS:</strong> Click "CREATE ROOM" when authenticated to make private rooms with custom passwords.</div>
+            <div><strong>AUTHENTICATION:</strong> Click "LOGIN" to access private rooms and create your own rooms.</div>
           </CardContent>
         </Card>
       </div>

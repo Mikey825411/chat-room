@@ -62,8 +62,8 @@ CREATE INDEX IF NOT EXISTS idx_room_members_room_id ON room_members(room_id);
 CREATE INDEX IF NOT EXISTS idx_room_members_user_id ON room_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_chat_rooms_type ON chat_rooms(type);
 
--- Enable pg_cron extension for scheduled jobs
-CREATE EXTENSION IF NOT EXISTS pg_cron;
+-- Enable pg_cron extension for scheduled jobs (may need superuser access)
+-- CREATE EXTENSION IF NOT EXISTS pg_cron;
 
 -- Database function for automated 24-hour public message cleanup
 CREATE OR REPLACE FUNCTION cleanup_old_public_messages()
@@ -73,10 +73,10 @@ BEGIN
   WHERE created_at < NOW() - INTERVAL '24 hours'
   AND room_id IN (SELECT id FROM chat_rooms WHERE type = 'public');
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql;
 
--- Schedule cleanup every hour using pg_cron
-SELECT cron.schedule('cleanup-public-messages', '0 * * * *', 'SELECT cleanup_old_public_messages();');
+-- Schedule cleanup every hour using pg_cron (uncomment if pg_cron is available)
+-- SELECT cron.schedule('cleanup-public-messages', '0 * * * *', 'SELECT cleanup_old_public_messages();');
 
 -- Row Level Security Policies
 
@@ -89,7 +89,7 @@ ALTER TABLE room_members ENABLE ROW LEVEL SECURITY;
 
 -- User profiles policies
 CREATE POLICY "Users can manage own profile" ON user_profiles
-  FOR ALL USING (user_id = auth.uid());
+  FOR ALL USING (user_id::text = auth.uid()::text);
 
 CREATE POLICY "Anyone can read user profiles" ON user_profiles
   FOR SELECT USING (true);
@@ -136,7 +136,7 @@ CREATE POLICY "Room members can insert messages to private rooms" ON messages
   ));
 
 CREATE POLICY "Users can delete own messages" ON messages
-  FOR DELETE USING (user_id = auth.uid());
+  FOR DELETE USING (user_id::text = auth.uid()::text);
 
 CREATE POLICY "Room owners can delete messages in their rooms" ON messages
   FOR DELETE USING (EXISTS (
@@ -161,9 +161,9 @@ CREATE POLICY "Users can leave rooms" ON room_members
 
 -- User settings policies
 CREATE POLICY "Users can manage own settings" ON user_settings
-  FOR ALL USING (user_id = auth.uid());
+  FOR ALL USING (user_id::text = auth.uid()::text);
 
 -- Insert default rooms
-INSERT INTO chat_rooms (id, name, type) VALUES
-  ('00000000-0000-0000-0000-000000000001'::uuid, 'Public Room', 'public')
-ON CONFLICT (id) DO NOTHING;
+INSERT INTO chat_rooms (name, type) VALUES
+  ('Public Room', 'public')
+ON CONFLICT DO NOTHING;
