@@ -1,4 +1,4 @@
-import { supabase, DatabaseMessage, DatabaseUserSettings, DatabaseUserProfile, getCurrentUser, signInWithEmail, signUpWithEmail, signOut } from './supabase'
+import { supabase, DatabaseMessage, DatabaseUserSettings, DatabaseUserProfile, DatabaseRoom, DatabaseRoomMember, getCurrentUser, signInWithEmail, signUpWithEmail, signOut, authenticateForPrivateRoom, clearPrivateRoomHistory } from './supabase'
 
 export class ChatDatabaseService {
   private static instance: ChatDatabaseService
