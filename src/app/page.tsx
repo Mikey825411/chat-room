@@ -343,7 +343,7 @@ export default function ChatApp() {
 
       const result = await signInWithEmail(email, password)
 
-      if (result.error) {
+      if ('error' in result) {
         setAuthError(result.error)
       } else {
         setAuthDialogOpen(null)
