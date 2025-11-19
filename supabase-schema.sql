@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS chat_rooms (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   name TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('public', 'private')),
+  password_hash VARCHAR(255),
+  owner_id UUID REFERENCES auth.users(id),
+  created_by_authenticated_user BOOLEAN DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
