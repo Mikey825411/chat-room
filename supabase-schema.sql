@@ -58,6 +58,25 @@ CREATE INDEX IF NOT EXISTS idx_messages_room_timestamp ON messages(room_id, time
 CREATE INDEX IF NOT EXISTS idx_messages_user_timestamp ON messages(user_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_email ON user_profiles(email);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_user_id ON user_profiles(user_id);
+CREATE INDEX IF NOT EXISTS idx_room_members_room_id ON room_members(room_id);
+CREATE INDEX IF NOT EXISTS idx_room_members_user_id ON room_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_rooms_type ON chat_rooms(type);
+
+-- Enable pg_cron extension for scheduled jobs
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- Database function for automated 24-hour public message cleanup
+CREATE OR REPLACE FUNCTION cleanup_old_public_messages()
+RETURNS void AS $$
+BEGIN
+  DELETE FROM messages
+  WHERE created_at < NOW() - INTERVAL '24 hours'
+  AND room_id IN (SELECT id FROM chat_rooms WHERE type = 'public');
+END;
+$$ LANGUAGE plpgsql;
+
+-- Schedule cleanup every hour using pg_cron
+SELECT cron.schedule('cleanup-public-messages', '0 * * * *', 'SELECT cleanup_old_public_messages();');
 
 -- Row Level Security Policies
 -- Enable RLS on user_profiles
