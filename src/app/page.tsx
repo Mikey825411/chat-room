@@ -45,7 +45,7 @@ export default function ChatApp() {
   const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null)
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [dbService] = useState<ChatDatabaseService | null>(null)
+  const [dbService, setDbService] = useState<ChatDatabaseService | null>(null)
 
   // Auth state
   const [isAuthenticated, setIsAuthenticated] = useState(false)
