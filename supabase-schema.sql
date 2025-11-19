@@ -79,45 +79,89 @@ $$ LANGUAGE plpgsql;
 SELECT cron.schedule('cleanup-public-messages', '0 * * * *', 'SELECT cleanup_old_public_messages();');
 
 -- Row Level Security Policies
--- Enable RLS on user_profiles
-ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
 
--- Users can manage their own profile
+-- Enable RLS on all tables
+ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE chat_rooms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE room_members ENABLE ROW LEVEL SECURITY;
+
+-- User profiles policies
 CREATE POLICY "Users can manage own profile" ON user_profiles
   FOR ALL USING (user_id = auth.jwt() ->> 'sub');
 
--- Anyone can read user profiles
 CREATE POLICY "Anyone can read user profiles" ON user_profiles
   FOR SELECT USING (true);
 
--- Enable RLS on messages
-ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+-- Chat rooms policies
+CREATE POLICY "Public rooms are readable by everyone" ON chat_rooms
+  FOR SELECT USING (type = 'public');
 
--- Anyone can insert messages
-CREATE POLICY "Anyone can insert messages" ON messages
-  FOR INSERT WITH CHECK (true);
+CREATE POLICY "Private rooms readable by authenticated users" ON chat_rooms
+  FOR SELECT USING (type = 'private' AND auth.uid() IS NOT NULL);
 
--- Anyone can read messages
-CREATE POLICY "Anyone can read messages" ON messages
-  FOR SELECT USING (true);
+CREATE POLICY "Anyone can create public rooms" ON chat_rooms
+  FOR INSERT WITH CHECK (type = 'public');
 
--- Enable RLS on user_settings
-ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Authenticated users can create private rooms" ON chat_rooms
+  FOR INSERT WITH CHECK (type = 'private' AND auth.uid() IS NOT NULL AND owner_id = auth.uid());
 
--- Users can manage their own settings
+CREATE POLICY "Room owners can update private rooms" ON chat_rooms
+  FOR UPDATE USING (owner_id = auth.uid());
+
+-- Messages policies
+CREATE POLICY "Public messages readable by everyone" ON messages
+  FOR SELECT USING (EXISTS (
+    SELECT 1 FROM chat_rooms WHERE chat_rooms.id = messages.room_id AND chat_rooms.type = 'public'
+  ));
+
+CREATE POLICY "Private messages readable by room members" ON messages
+  FOR SELECT USING (EXISTS (
+    SELECT 1 FROM room_members
+    WHERE room_members.room_id = messages.room_id
+    AND room_members.user_id = auth.uid()
+  ));
+
+CREATE POLICY "Anyone can insert messages to public rooms" ON messages
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM chat_rooms WHERE chat_rooms.id = room_id AND chat_rooms.type = 'public'
+  ));
+
+CREATE POLICY "Room members can insert messages to private rooms" ON messages
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM room_members
+    WHERE room_members.room_id = room_id
+    AND room_members.user_id = auth.uid()
+  ));
+
+CREATE POLICY "Users can delete own messages" ON messages
+  FOR DELETE USING (user_id = auth.jwt() ->> 'sub');
+
+CREATE POLICY "Room owners can delete messages in their rooms" ON messages
+  FOR DELETE USING (EXISTS (
+    SELECT 1 FROM chat_rooms
+    WHERE chat_rooms.id = messages.room_id
+    AND chat_rooms.owner_id = auth.uid()
+  ));
+
+-- Room members policies
+CREATE POLICY "Users can join private rooms with password" ON room_members
+  FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM chat_rooms WHERE chat_rooms.id = room_id AND chat_rooms.type = 'private')
+    AND auth.uid() IS NOT NULL
+    AND user_id = auth.uid()
+  );
+
+CREATE POLICY "Room members can view their memberships" ON room_members
+  FOR SELECT USING (user_id = auth.uid());
+
+CREATE POLICY "Users can leave rooms" ON room_members
+  FOR DELETE USING (user_id = auth.uid());
+
+-- User settings policies
 CREATE POLICY "Users can manage own settings" ON user_settings
   FOR ALL USING (user_id = auth.jwt() ->> 'sub');
-
--- Enable RLS on chat_rooms
-ALTER TABLE chat_rooms ENABLE ROW LEVEL SECURITY;
-
--- Anyone can read rooms
-CREATE POLICY "Anyone can read rooms" ON chat_rooms
-  FOR SELECT USING (true);
-
--- Anyone can insert rooms
-CREATE POLICY "Anyone can insert rooms" ON chat_rooms
-  FOR INSERT WITH CHECK (true);
 
 -- Insert default rooms
 INSERT INTO chat_rooms (id, name, type) VALUES 
