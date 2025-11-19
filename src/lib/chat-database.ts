@@ -4,6 +4,7 @@ export class ChatDatabaseService {
   private static instance: ChatDatabaseService
   private userId: string | null = null
   private currentUser: any = null
+  private realtimeSubscriptions: Map<string, any> = new Map()
 
   private constructor() {
     this.userId = this.generateUserId()
