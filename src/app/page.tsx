@@ -564,7 +564,7 @@ export default function ChatApp() {
                         roomId={currentRoom.id}
                         roomName={currentRoom.name}
                         isOwner={true}
-                        onClearHistory={handleClearPrivateRoom}
+                        onClearHistory={() => handleClearPrivateRoom(currentRoom.id)}
                         onChangePassword={handleChangePassword}
                       />
                     </div>
