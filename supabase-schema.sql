@@ -136,7 +136,7 @@ CREATE POLICY "Room members can insert messages to private rooms" ON messages
   ));
 
 CREATE POLICY "Users can delete own messages" ON messages
-  FOR DELETE USING (user_id = auth.jwt() ->> 'sub');
+  FOR DELETE USING (user_id = auth.uid());
 
 CREATE POLICY "Room owners can delete messages in their rooms" ON messages
   FOR DELETE USING (EXISTS (
