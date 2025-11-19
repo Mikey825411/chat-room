@@ -93,7 +93,7 @@ export class ChatDatabaseService {
   }
 
   // Message operations
-  async saveMessage(roomId: string, message: Omit<DatabaseMessage, 'id' | 'created_at'>): Promise<DatabaseMessage | null> {
+  async saveMessage(roomId: string, message: any): Promise<DatabaseMessage | null> {
     try {
       if (!this.userId) return null
 
