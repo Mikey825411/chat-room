@@ -303,8 +303,8 @@ export default function ChatApp() {
   }
 
   // File processing
-  const processFiles = async (files: File[]): Promise<any[]> => {
-    const processedFiles = []
+  const processFiles = async (files: File[]): Promise<Attachment[]> => {
+    const processedFiles: Attachment[] = []
     for (const file of files) {
       if (file.size > 10 * 1024 * 1024) {
         alert(`File ${file.name} is too large. Maximum size is 10MB.`)
