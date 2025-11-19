@@ -161,7 +161,7 @@ CREATE POLICY "Users can leave rooms" ON room_members
 
 -- User settings policies
 CREATE POLICY "Users can manage own settings" ON user_settings
-  FOR ALL USING (user_id = auth.jwt() ->> 'sub');
+  FOR ALL USING (user_id = auth.uid());
 
 -- Insert default rooms
 INSERT INTO chat_rooms (id, name, type) VALUES
