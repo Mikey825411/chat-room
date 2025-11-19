@@ -18,9 +18,15 @@ export class ChatDatabaseService {
   }
 
   private generateUserId(): string {
+    // For authenticated users, use their actual UUID
+    if (this.currentUser) {
+      return this.currentUser.id
+    }
+
+    // For anonymous users, use a generated ID
     let userId = localStorage.getItem('chat_user_id')
     if (!userId) {
-      userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      userId = `anonymous_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       localStorage.setItem('chat_user_id', userId)
     }
     return userId
